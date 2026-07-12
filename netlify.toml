@@ -1,0 +1,15 @@
+# Netlify config — deploys the Next.js FRONTEND only.
+# The Node/Express + whatsapp-web.js BACKEND cannot run on Netlify (it needs a
+# persistent process running headless Chromium). Host the backend elsewhere
+# (Railway / Render / Fly.io / a VPS) and point NEXT_PUBLIC_API_URL at it.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

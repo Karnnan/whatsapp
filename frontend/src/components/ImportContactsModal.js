@@ -58,13 +58,22 @@ export default function ImportContactsModal({ onClose, onDone, notify }) {
       const idx = { phone: null, name: null, pushname: null, about: null, group: null };
       ws.getRow(1).eachCell((cell, col) => {
         const h = String(cellText(cell.value) || '').toLowerCase();
-        if (!idx.phone && /(phone|number|mobile|msisdn|contact)/.test(h)) idx.phone = col;
-        else if (!idx.pushname && /(public|push)/.test(h)) idx.pushname = col;
+        // Match specific categories BEFORE the broad phone match so a
+        // "Contact Name" column isn't mistaken for the phone column.
+        if (!idx.pushname && /(public|push)/.test(h)) idx.pushname = col;
         else if (!idx.name && /name/.test(h)) idx.name = col;
         else if (!idx.about && /(about|status)/.test(h)) idx.about = col;
         else if (!idx.group && /group/.test(h)) idx.group = col;
+        else if (!idx.phone && /(phone|mobile|msisdn|whatsapp|tel|number)/.test(h)) idx.phone = col;
       });
-      if (!idx.phone) idx.phone = 1; // fall back to first column
+      if (!idx.phone) {
+        // Fall back to the first column not already claimed by another field.
+        const used = new Set([idx.name, idx.pushname, idx.about, idx.group].filter(Boolean));
+        for (let c = 1; c <= ws.columnCount; c += 1) {
+          if (!used.has(c)) { idx.phone = c; break; }
+        }
+        if (!idx.phone) idx.phone = 1;
+      }
 
       const contacts = [];
       ws.eachRow((row, rowNum) => {
@@ -152,7 +161,7 @@ export default function ImportContactsModal({ onClose, onDone, notify }) {
         ) : (
           <div className="stack">
             <label className="file-drop">
-              <input type="file" accept=".xlsx,.xls" onChange={(e) => handleFile(e.target.files[0] || null)} />
+              <input type="file" accept=".xlsx" onChange={(e) => handleFile(e.target.files[0] || null)} />
               <span style={{ fontSize: 18 }}>📄</span>
               <span className={file ? 'file-name' : ''}>{file ? file.name : 'Choose an .xlsx file'}</span>
             </label>
@@ -174,6 +183,7 @@ export default function ImportContactsModal({ onClose, onDone, notify }) {
 function cellText(v) {
   if (v == null) return null;
   if (typeof v === 'object') {
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
     if (v.text != null) return String(v.text).trim() || null;
     if (v.result != null) return String(v.result).trim() || null;
     if (Array.isArray(v.richText)) return v.richText.map((t) => t.text).join('').trim() || null;

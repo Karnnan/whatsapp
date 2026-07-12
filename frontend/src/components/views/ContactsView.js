@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { api } from '@/lib/api';
 import SendModal from '@/components/SendModal';
@@ -35,6 +35,14 @@ export default function ContactsView() {
   }, [groupedContacts, query, groupFilter]);
 
   const visibleCount = filteredGroups.reduce((n, g) => n + g.items.length, 0);
+
+  // If the group we're filtering by disappears (deleted/cleared), reset to All
+  // so the view doesn't get stuck showing an empty state.
+  useEffect(() => {
+    if (groupFilter !== 'all' && !groupedContacts.some((g) => (g.groupId || '__none__') === groupFilter)) {
+      setGroupFilter('all');
+    }
+  }, [groupedContacts, groupFilter]);
 
   async function exportExcel() {
     const list = selectedContacts.length ? selectedContacts : contacts;
@@ -106,9 +114,12 @@ export default function ContactsView() {
     if (!confirm(`Clear all contacts from "${g.groupName}"? This cannot be undone.`)) return;
     setBusy(true);
     try {
-      // Delete by explicit ids (not by group id) so a falsy/empty group id can
-      // never collapse into a "delete everything" request.
-      await api.deleteContacts(g.items.map((c) => c.id));
+      // Use the FULL (unfiltered) group membership so an active search query
+      // can't shrink the deletion to only the visible rows. Delete by explicit
+      // ids so a falsy/empty group id can never mean "delete everything".
+      const key = g.groupId || '__none__';
+      const full = groupedContacts.find((x) => (x.groupId || '__none__') === key);
+      await api.deleteContacts((full ? full.items : g.items).map((c) => c.id));
       clearSelection();
       await loadContacts();
       notify(`Cleared "${g.groupName}".`, 'info');

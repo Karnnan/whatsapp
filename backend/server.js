@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
@@ -56,12 +57,14 @@ const cleanup = (file) => {
 // Stable group id for manually-added / imported ("custom") groups, derived
 // from the name so re-adding to the same-named group merges instead of dupes.
 const customGroupId = (name) => {
-  const slug = String(name || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return `custom:${slug || 'group'}`;
+  const norm = String(name || '').trim().toLowerCase();
+  const slug = norm.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (slug) return `custom:${slug}`;
+  if (!norm) return 'custom:group';
+  // Non-Latin / emoji-only names have an empty slug — hash the normalized name
+  // so distinct names get distinct ids (and re-imports of the same name merge).
+  const hash = crypto.createHash('sha1').update(norm, 'utf8').digest('hex').slice(0, 12);
+  return `custom:${hash}`;
 };
 
 const chunkArr = (arr, size) => {
