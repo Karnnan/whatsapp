@@ -94,7 +94,11 @@ const chunkArr = (arr, size) => {
 // ===========================================================================
 const PUBLIC_API = new Set(['/api/health', '/api/auth/login']);
 app.use((req, res, next) => {
-  if (!req.path.startsWith('/api/') || PUBLIC_API.has(req.path)) return next();
+  // Normalize case + trailing slash to match Express's default routing
+  // (case-INsensitive, non-strict). Without this, /API/contacts or
+  // /api/contacts/ would slip past the gate while still hitting the route.
+  const p = req.path.toLowerCase().replace(/\/+$/, '') || '/';
+  if (!p.startsWith('/api/') || PUBLIC_API.has(p)) return next();
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (token && activeTokens.has(token)) return next();

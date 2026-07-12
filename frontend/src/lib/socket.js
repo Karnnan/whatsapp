@@ -16,3 +16,12 @@ export function getSocket() {
   }
   return socket;
 }
+
+// Tear down the singleton on logout so it doesn't keep a live connection with a
+// dead token; the next getSocket() builds a fresh one that handshakes anew.
+export function disconnectSocket() {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+}

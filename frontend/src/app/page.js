@@ -5,6 +5,7 @@ import { AppProvider } from '@/context/AppContext';
 import AppShell from '@/components/AppShell';
 import LoginPage from '@/components/LoginPage';
 import { getToken, clearAuth } from '@/lib/auth';
+import { disconnectSocket } from '@/lib/socket';
 import { api } from '@/lib/api';
 
 export default function Home() {
@@ -18,6 +19,7 @@ export default function Home() {
 
   function handleLogout() {
     api.authLogout();
+    disconnectSocket();
     clearAuth();
     setAuthed(false);
   }
