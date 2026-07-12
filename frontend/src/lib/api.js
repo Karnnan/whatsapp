@@ -27,12 +27,22 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ groupId }),
     }).then(handle),
+  cancelExtract: () => fetch(`${API_URL}/api/extract/cancel`, { method: 'POST' }).then(handle),
 
   // Contacts
   getContacts: (groupId) =>
     fetch(`${API_URL}/api/contacts${groupId ? `?groupId=${encodeURIComponent(groupId)}` : ''}`).then(handle),
   deleteContact: (id) => fetch(`${API_URL}/api/contacts/${id}`, { method: 'DELETE' }).then(handle),
-  clearContacts: () => fetch(`${API_URL}/api/contacts`, { method: 'DELETE' }).then(handle),
+  deleteContacts: (ids) =>
+    fetch(`${API_URL}/api/contacts/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }).then(handle),
+  clearContacts: (groupId) =>
+    fetch(`${API_URL}/api/contacts${groupId ? `?groupId=${encodeURIComponent(groupId)}` : ''}`, {
+      method: 'DELETE',
+    }).then(handle),
 
   // Send (FormData built by the caller)
   send: (formData) => fetch(`${API_URL}/api/send`, { method: 'POST', body: formData }).then(handle),

@@ -15,6 +15,7 @@ export default function SendComposer({ number: fixedNumber, disabled, notify, on
   const [text, setText] = useState('');
   const [caption, setCaption] = useState('');
   const [file, setFile] = useState(null);
+  const [viewOnce, setViewOnce] = useState(false);
   const [sending, setSending] = useState(false);
 
   const targetNumber = fixedNumber || number;
@@ -32,6 +33,7 @@ export default function SendComposer({ number: fixedNumber, disabled, notify, on
     } else {
       fd.append('file', file);
       if (caption) fd.append('caption', caption);
+      if (type === 'media' && viewOnce) fd.append('viewOnce', 'true');
     }
 
     setSending(true);
@@ -100,12 +102,23 @@ export default function SendComposer({ number: fixedNumber, disabled, notify, on
             </p>
           )}
           {type === 'media' && (
-            <input
-              className="input"
-              placeholder="Optional caption…"
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-            />
+            <>
+              <input
+                className="input"
+                placeholder="Optional caption…"
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+              />
+              <label className="spread toggle-row">
+                <span className="small muted">👁️ Send as “View Once”</span>
+                <button
+                  type="button"
+                  className={`switch ${viewOnce ? 'on' : ''}`}
+                  onClick={() => setViewOnce((v) => !v)}
+                  aria-pressed={viewOnce}
+                />
+              </label>
+            </>
           )}
         </>
       )}

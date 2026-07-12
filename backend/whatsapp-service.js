@@ -16,6 +16,8 @@ class WhatsAppService {
     this.lastQr = null;      // data-URL of the current QR code
     this.me = null;          // { pushname, number } once ready
     this.broadcasting = false;
+    this.extracting = false;
+    this.cancelExtractFlag = false;
   }
 
   attachIo(io) {
@@ -39,6 +41,7 @@ class WhatsAppService {
       qr: this.status === 'QR' ? this.lastQr : null,
       me: this.me,
       broadcasting: this.broadcasting,
+      extracting: this.extracting,
     };
   }
 
@@ -149,6 +152,13 @@ class WhatsAppService {
   // Groups & extraction
   // ---------------------------------------------------------------------------
 
+  requestCancelExtract() {
+    if (!this.extracting) return false;
+    this.cancelExtractFlag = true;
+    this.log('Cancellation requested — stopping after the current contact…', 'warn');
+    return true;
+  }
+
   async getGroups() {
     this.ensureReady();
     const chats = await this.client.getChats();
@@ -169,6 +179,11 @@ class WhatsAppService {
    */
   async extractGroup(groupId) {
     this.ensureReady();
+    if (this.extracting) {
+      const err = new Error('An extraction is already running.');
+      err.statusCode = 409;
+      throw err;
+    }
     const chat = await this.client.getChatById(groupId);
     if (!chat || !chat.isGroup) {
       const err = new Error('That chat is not a group or could not be found.');
@@ -181,48 +196,62 @@ class WhatsAppService {
     const groupName = chat.name || 'Unnamed group';
     this.log(`Extracting ${total} participants from "${groupName}"…`, 'info');
 
+    this.extracting = true;
+    this.cancelExtractFlag = false;
+    this.emit('status', this.getStatus());
+
     const records = [];
     let processed = 0;
+    let cancelled = false;
 
-    for (const p of participants) {
-      const serialized = p.id._serialized;
-      const number = p.id.user;
-      let name = null;
-      let pushname = null;
-      let about = null;
-
-      try {
-        const contact = await this.client.getContactById(serialized);
-        name = contact.name || null;         // saved name (only if number is in your contacts)
-        pushname = contact.pushname || null; // public display name
-        try {
-          about = await contact.getAbout();
-        } catch (_) {
-          about = null;
+    try {
+      for (const p of participants) {
+        if (this.cancelExtractFlag) {
+          cancelled = true;
+          this.log('Extraction cancelled — saving contacts collected so far…', 'warn');
+          break;
         }
-      } catch (_) {
-        // Contact lookup can fail for some numbers; keep what we have.
+
+        const serialized = p.id._serialized;
+        const number = p.id.user;
+        let name = null;
+        let pushname = null;
+        let about = null;
+
+        try {
+          const contact = await this.client.getContactById(serialized);
+          name = contact.name || null;                          // saved name (only if number is in your contacts)
+          pushname = contact.pushname || contact.verifiedName || null; // public display name
+          about = await this.fetchAbout(contact);
+        } catch (_) {
+          // Contact lookup can fail for some numbers; keep what we have.
+        }
+
+        records.push({
+          phone_number: number,
+          name,
+          pushname,
+          about_text: about,
+          group_id: groupId,
+          group_name: groupName,
+        });
+
+        processed += 1;
+        this.emit('extract-progress', { processed, total, number, groupName, cancelled: false });
+
+        // Gentle pacing to avoid hammering the WhatsApp web client.
+        await sleep(250);
       }
-
-      records.push({
-        phone_number: number,
-        name,
-        pushname,
-        about_text: about,
-        group_id: groupId,
-        group_name: groupName,
-      });
-
-      processed += 1;
-      this.emit('extract-progress', { processed, total, number, groupName });
-
-      // Gentle pacing to avoid hammering the WhatsApp web client.
-      await sleep(250);
+    } finally {
+      this.extracting = false;
+      this.cancelExtractFlag = false;
+      this.emit('status', this.getStatus());
     }
 
     // Upsert in chunks to stay well under payload limits.
     let saved = 0;
     for (const batch of chunk(records, 200)) {
+      if (batch.length === 0) continue;
       const { error } = await supabase
         .from('contacts')
         .upsert(batch, { onConflict: 'phone_number,group_id' });
@@ -235,8 +264,29 @@ class WhatsAppService {
       saved += batch.length;
     }
 
-    this.log(`Extraction complete — saved ${saved} contacts from "${groupName}".`, 'success');
-    return { total, saved, groupName, contacts: records };
+    this.emit('extract-progress', { processed, total, groupName, cancelled, done: true });
+    this.log(
+      `Extraction ${cancelled ? 'cancelled' : 'complete'} — saved ${saved} contacts from "${groupName}".`,
+      cancelled ? 'warn' : 'success'
+    );
+    return { total, saved, groupName, cancelled, contacts: records };
+  }
+
+  /**
+   * Best-effort fetch of a contact's "About" text. WhatsApp frequently returns
+   * null for privacy reasons; we retry once on a transient failure and degrade
+   * to null rather than letting it abort the whole contact.
+   */
+  async fetchAbout(contact) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const about = await contact.getAbout();
+        return about === undefined ? null : about;
+      } catch (_) {
+        if (attempt === 0) await sleep(400);
+      }
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -269,22 +319,23 @@ class WhatsAppService {
    * Send a media file. When `asVoice` is true the audio is delivered as a
    * native WhatsApp voice note (PTT) rather than an attached audio file.
    */
-  async sendMediaFile(number, filePath, { asVoice = false, caption = '' } = {}) {
+  async sendMediaFile(number, filePath, { asVoice = false, caption = '', viewOnce = false } = {}) {
     this.ensureReady();
     const chatId = this.toChatId(number);
     const media = MessageMedia.fromFilePath(filePath);
     const options = {};
     if (asVoice) options.sendAudioAsVoice = true;
+    if (viewOnce) options.isViewOnce = true;
     if (caption) options.caption = caption;
     await this.client.sendMessage(chatId, media, options);
-    this.log(`${asVoice ? 'Voice note' : 'Media'} sent to ${number}.`, 'success');
+    this.log(`${asVoice ? 'Voice note' : 'Media'} sent to ${number}${viewOnce ? ' (view once)' : ''}.`, 'success');
   }
 
   /**
    * Broadcast to a list of numbers with randomized human-like delays.
    * Progress streamed via `broadcast-progress`.
    */
-  async broadcast(numbers, { text = '', filePath = null, asVoice = false, caption = '' } = {}) {
+  async broadcast(numbers, { text = '', filePath = null, asVoice = false, caption = '', viewOnce = false } = {}) {
     this.ensureReady();
     if (this.broadcasting) {
       const err = new Error('A broadcast is already in progress.');
@@ -343,6 +394,7 @@ class WhatsAppService {
           if (media) {
             const options = {};
             if (asVoice) options.sendAudioAsVoice = true;
+            if (viewOnce) options.isViewOnce = true;
             if (caption || text) options.caption = caption || text;
             await this.client.sendMessage(chatId, media, options);
           } else {

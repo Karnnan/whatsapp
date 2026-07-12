@@ -84,6 +84,11 @@ app.post('/api/extract', wrap(async (req, res) => {
   res.json(result);
 }));
 
+app.post('/api/extract/cancel', wrap(async (req, res) => {
+  const cancelling = wa.requestCancelExtract();
+  res.json({ ok: true, cancelling });
+}));
+
 // ===========================================================================
 // Contacts (backed by Supabase)
 // ===========================================================================
@@ -112,11 +117,23 @@ app.delete('/api/contacts', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+app.post('/api/contacts/delete', wrap(async (req, res) => {
+  // Bulk delete a specific set of contact ids.
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids array is required.' });
+  }
+  const { error } = await supabase.from('contacts').delete().in('id', ids);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, deleted: ids.length });
+}));
+
 // ===========================================================================
 // Quick send (one contact) — text, media or voice note
 // ===========================================================================
 app.post('/api/send', upload.single('file'), wrap(async (req, res) => {
   const { number, type, text, caption } = req.body;
+  const viewOnce = req.body.viewOnce === 'true' || req.body.viewOnce === true;
   try {
     if (!number) return res.status(400).json({ error: 'number is required.' });
 
@@ -128,7 +145,7 @@ app.post('/api/send', upload.single('file'), wrap(async (req, res) => {
     } else {
       // media (image/video/document/audio-as-file)
       if (!req.file) return res.status(400).json({ error: 'A file is required.' });
-      await wa.sendMediaFile(number, req.file.path, { asVoice: false, caption });
+      await wa.sendMediaFile(number, req.file.path, { asVoice: false, caption, viewOnce });
     }
     res.json({ ok: true });
   } finally {
@@ -142,6 +159,7 @@ app.post('/api/send', upload.single('file'), wrap(async (req, res) => {
 app.post('/api/broadcast', upload.single('file'), wrap(async (req, res) => {
   try {
     const asVoice = req.body.asVoice === 'true' || req.body.asVoice === true;
+    const viewOnce = req.body.viewOnce === 'true' || req.body.viewOnce === true;
     const text = req.body.text || '';
     const caption = req.body.caption || '';
 
@@ -183,6 +201,7 @@ app.post('/api/broadcast', upload.single('file'), wrap(async (req, res) => {
       text,
       caption,
       asVoice,
+      viewOnce,
       filePath: req.file ? req.file.path : null,
     })
       .catch((e) => wa.log(`Broadcast error: ${e.message}`, 'error'))
