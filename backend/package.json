@@ -1,0 +1,20 @@
+{
+  "name": "whatsapp-bot-backend",
+  "version": "1.0.0",
+  "description": "Node.js + Express service running the WhatsApp bot (whatsapp-web.js), Socket.io and Supabase.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.7.5",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}
