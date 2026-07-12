@@ -1,6 +1,6 @@
 # Backend (Express + whatsapp-web.js) for hosts with a persistent process:
 # Railway, Render, Fly.io, a VPS, etc. Netlify/Vercel CANNOT run this.
-FROM node:20-slim
+FROM node:22-slim
 
 # Chromium + the libraries whatsapp-web.js (Puppeteer) needs to run headless.
 RUN apt-get update && apt-get install -y --no-install-recommends \
