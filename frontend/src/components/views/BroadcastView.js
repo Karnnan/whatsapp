@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { getSocket } from '@/lib/socket';
 
 export default function BroadcastView() {
-  const { ready, notify, contacts, groupedContacts, selectedContacts } = useApp();
+  const { ready, notify, contacts, groupedContacts, selectedContacts, broadcasting } = useApp();
 
   const [recipientMode, setRecipientMode] = useState('all'); // all | selected | groups
   const [chosenGroups, setChosenGroups] = useState(() => new Set());
@@ -79,6 +79,9 @@ export default function BroadcastView() {
     }
   }
 
+  // Derive from context.broadcasting (which survives view remounts) so the
+  // button stays disabled after navigating away and back mid-broadcast.
+  const isRunning = running || broadcasting;
   const pct = progress && progress.total ? Math.round((progress.processed / progress.total) * 100) : 0;
 
   return (
@@ -165,8 +168,8 @@ export default function BroadcastView() {
             onChange={(e) => setText(e.target.value)}
           />
 
-          <button className="btn btn-violet btn-block mt-2" onClick={handleBroadcast} disabled={!ready || running || !recipientNumbers.length}>
-            {running ? <span className="spinner" /> : '📢'} {running ? 'Broadcasting…' : `Send to ${recipientNumbers.length}`}
+          <button className="btn btn-violet btn-block mt-2" onClick={handleBroadcast} disabled={!ready || isRunning || !recipientNumbers.length}>
+            {isRunning ? <span className="spinner" /> : '📢'} {isRunning ? 'Broadcasting…' : `Send to ${recipientNumbers.length}`}
           </button>
 
           {progress && (

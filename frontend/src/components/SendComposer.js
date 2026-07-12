@@ -60,7 +60,7 @@ export default function SendComposer({ number: fixedNumber, disabled, notify, on
           <button
             key={t.key}
             className={type === t.key ? 'active' : ''}
-            onClick={() => { setType(t.key); setFile(null); }}
+            onClick={() => { setType(t.key); setFile(null); setCaption(''); setViewOnce(false); }}
             type="button"
           >
             <span style={{ marginRight: 6 }}>{t.icon}</span>{t.label}

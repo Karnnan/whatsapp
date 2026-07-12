@@ -120,7 +120,12 @@ export function AppProvider({ children }) {
     };
 
     const onConnect = () => setOnline(true);
-    const onDisconnect = () => setOnline(false);
+    const onDisconnect = () => {
+      setOnline(false);
+      // Force loadContacts to re-run when the session returns to READY after a
+      // socket blip (the server re-emits READY without an intervening state).
+      readyRef.current = false;
+    };
     const onStatus = (s) => { socketStatusRef.current = true; applyStatus(s); };
     const onQr = (dataUrl) => setQr(dataUrl);
     const onLog = (entry) => setLogs((l) => [...l.slice(-249), entry]);

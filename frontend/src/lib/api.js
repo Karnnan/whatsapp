@@ -46,7 +46,7 @@ export const api = {
       body: JSON.stringify(payload),
     }).then(handle),
   clearContacts: (groupId) =>
-    fetch(`${API_URL}/api/contacts${groupId ? `?groupId=${encodeURIComponent(groupId)}` : ''}`, {
+    fetch(`${API_URL}/api/contacts?${groupId ? `groupId=${encodeURIComponent(groupId)}` : 'all=true'}`, {
       method: 'DELETE',
     }).then(handle),
 

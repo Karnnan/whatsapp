@@ -106,7 +106,10 @@ export default function ContactsView() {
     if (!confirm(`Clear all contacts from "${g.groupName}"? This cannot be undone.`)) return;
     setBusy(true);
     try {
-      await api.clearContacts(g.groupId);
+      // Delete by explicit ids (not by group id) so a falsy/empty group id can
+      // never collapse into a "delete everything" request.
+      await api.deleteContacts(g.items.map((c) => c.id));
+      clearSelection();
       await loadContacts();
       notify(`Cleared "${g.groupName}".`, 'info');
     } catch (e) {

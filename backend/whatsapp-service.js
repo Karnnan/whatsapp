@@ -184,18 +184,10 @@ class WhatsAppService {
       err.statusCode = 409;
       throw err;
     }
-    const chat = await this.client.getChatById(groupId);
-    if (!chat || !chat.isGroup) {
-      const err = new Error('That chat is not a group or could not be found.');
-      err.statusCode = 400;
-      throw err;
-    }
-
-    const participants = chat.participants || (chat.groupMetadata && chat.groupMetadata.participants) || [];
-    const total = participants.length;
-    const groupName = chat.name || 'Unnamed group';
-    this.log(`Extracting ${total} participants from "${groupName}"…`, 'info');
-
+    // Claim the flag synchronously — with no await between the guard above and
+    // this assignment, a concurrent extract call is reliably rejected. The flag
+    // stays held (finally below) through the whole save, so a re-click during
+    // the DB upsert can't start a second run.
     this.extracting = true;
     this.cancelExtractFlag = false;
     this.emit('status', this.getStatus());
@@ -203,8 +195,23 @@ class WhatsAppService {
     const records = [];
     let processed = 0;
     let cancelled = false;
+    let saved = 0;
+    let total = 0;
+    let groupName = 'Unnamed group';
 
     try {
+      const chat = await this.client.getChatById(groupId);
+      if (!chat || !chat.isGroup) {
+        const err = new Error('That chat is not a group or could not be found.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const participants = chat.participants || (chat.groupMetadata && chat.groupMetadata.participants) || [];
+      total = participants.length;
+      groupName = chat.name || 'Unnamed group';
+      this.log(`Extracting ${total} participants from "${groupName}"…`, 'info');
+
       for (const p of participants) {
         if (this.cancelExtractFlag) {
           cancelled = true;
@@ -242,26 +249,25 @@ class WhatsAppService {
         // Gentle pacing to avoid hammering the WhatsApp web client.
         await sleep(250);
       }
+
+      // Upsert in chunks while still holding the extracting flag.
+      for (const batch of chunk(records, 200)) {
+        if (batch.length === 0) continue;
+        const { error } = await supabase
+          .from('contacts')
+          .upsert(batch, { onConflict: 'phone_number,group_id' });
+        if (error) {
+          this.log(`Supabase upsert error: ${error.message}`, 'error');
+          const err = new Error(`Failed to save contacts: ${error.message}`);
+          err.statusCode = 500;
+          throw err;
+        }
+        saved += batch.length;
+      }
     } finally {
       this.extracting = false;
       this.cancelExtractFlag = false;
       this.emit('status', this.getStatus());
-    }
-
-    // Upsert in chunks to stay well under payload limits.
-    let saved = 0;
-    for (const batch of chunk(records, 200)) {
-      if (batch.length === 0) continue;
-      const { error } = await supabase
-        .from('contacts')
-        .upsert(batch, { onConflict: 'phone_number,group_id' });
-      if (error) {
-        this.log(`Supabase upsert error: ${error.message}`, 'error');
-        const err = new Error(`Failed to save contacts: ${error.message}`);
-        err.statusCode = 500;
-        throw err;
-      }
-      saved += batch.length;
     }
 
     this.emit('extract-progress', { processed, total, groupName, cancelled, done: true });

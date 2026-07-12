@@ -125,8 +125,12 @@ app.delete('/api/contacts/:id', wrap(async (req, res) => {
 }));
 
 app.delete('/api/contacts', wrap(async (req, res) => {
-  // Delete all (optionally scoped to a group).
-  const { groupId } = req.query;
+  // Delete a group's contacts, or ALL contacts only with an explicit ?all=true.
+  // A missing groupId must never silently mean "delete everything".
+  const { groupId, all } = req.query;
+  if (!groupId && all !== 'true') {
+    return res.status(400).json({ error: 'Refusing to delete all contacts without an explicit ?all=true.' });
+  }
   let query = supabase.from('contacts').delete();
   query = groupId ? query.eq('group_id', groupId) : query.neq('id', -1);
   const { error } = await query;
