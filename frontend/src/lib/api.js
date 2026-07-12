@@ -86,6 +86,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ whatsapp_message_id }),
     }).then(handle),
+  deleteMessages: (ids) =>
+    fetch(`${API_URL}/api/messages/delete-bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }).then(handle),
 
   // Settings
   getSettings: () => fetch(`${API_URL}/api/settings`).then(handle),

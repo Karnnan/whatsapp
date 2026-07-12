@@ -18,6 +18,7 @@ class WhatsAppService {
     this.broadcasting = false;
     this.extracting = false;
     this.cancelExtractFlag = false;
+    this.recentIncomingIds = new Set(); // de-dupe re-delivered 'message' events
   }
 
   attachIo(io) {
@@ -61,6 +62,8 @@ class WhatsAppService {
       authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
       puppeteer: {
         headless: true,
+        // Use a system-installed Chromium when provided (e.g. in Docker/hosting).
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -445,8 +448,17 @@ class WhatsAppService {
   async handleIncomingMessage(msg) {
     try {
       if (msg.fromMe) return;
-      // Track only 1:1 chats — never groups (@g.us), status broadcasts or newsletters.
-      if (!msg.from || !msg.from.endsWith('@c.us')) return;
+      const from = msg.from || '';
+      // Skip groups (@g.us), status broadcasts and newsletters. Keep 1:1 chats —
+      // which modern WhatsApp may address as @c.us OR the newer @lid scheme, so
+      // we exclude the non-1:1 types rather than requiring @c.us.
+      if (
+        !from ||
+        from.endsWith('@g.us') ||
+        from.endsWith('@newsletter') ||
+        from.endsWith('@broadcast') ||
+        from === 'status@broadcast'
+      ) return;
 
       await this.recordIncoming(msg);
       await this.maybeAutoReply(msg);
@@ -458,11 +470,16 @@ class WhatsAppService {
   // Save an incoming direct message to the inbox and alert the dashboard.
   async recordIncoming(msg) {
     try {
-      const number = String(msg.from || '').replace('@c.us', '');
+      const wid = msg.id ? msg.id._serialized : null;
+      // Guard against whatsapp-web.js occasionally re-emitting the same message.
+      if (wid && this.recentIncomingIds.has(wid)) return;
+
+      let number = String(msg.from || '').split('@')[0];
       let senderName = null;
       try {
         const contact = await msg.getContact();
         senderName = contact.name || contact.pushname || null;
+        if (contact.number) number = contact.number; // real phone even under @lid
       } catch (_) { /* best effort */ }
 
       const body = msg.body && msg.body.trim()
@@ -475,7 +492,7 @@ class WhatsAppService {
           sender_number: number,
           sender_name: senderName,
           message_body: body,
-          wa_message_id: msg.id ? msg.id._serialized : null,
+          wa_message_id: wid,
           is_read: false,
         })
         .select()
@@ -484,6 +501,14 @@ class WhatsAppService {
         this.log(`Inbox save failed: ${error.message}`, 'error');
         return;
       }
+
+      if (wid) {
+        this.recentIncomingIds.add(wid);
+        if (this.recentIncomingIds.size > 1000) {
+          this.recentIncomingIds = new Set(Array.from(this.recentIncomingIds).slice(-500));
+        }
+      }
+      this.log(`Inbox: message from ${senderName || `+${number}`}.`, 'info');
       this.emit('new-message', data);
     } catch (e) {
       this.log(`Inbox error: ${e.message}`, 'error');

@@ -17,7 +17,10 @@ export default function InboxView() {
     setLoading(true);
     try {
       const res = await api.getReceived(false);
-      setMessages(res.messages);
+      const server = res.messages || [];
+      const ids = new Set(server.map((m) => m.id));
+      // Preserve any socket-prepended messages the server snapshot lacks yet.
+      setMessages((prev) => [...prev.filter((m) => !ids.has(m.id)), ...server]);
       setNeedsSetup(!!res.needsSetup);
     } catch (e) {
       notify(e.message, 'error');
@@ -29,7 +32,7 @@ export default function InboxView() {
   useEffect(() => {
     load();
     const socket = getSocket();
-    const onNew = (m) => setMessages((list) => [m, ...list]);
+    const onNew = (m) => setMessages((list) => (list.some((x) => x.id === m.id) ? list : [m, ...list]));
     socket.on('new-message', onNew);
     return () => socket.off('new-message', onNew);
     // eslint-disable-next-line react-hooks/exhaustive-deps

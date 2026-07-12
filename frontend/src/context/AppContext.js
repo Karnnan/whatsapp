@@ -32,7 +32,10 @@ export function AppProvider({ children }) {
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
-  const [unreadCount, setUnreadCount] = useState(0);
+  // Track unread by message id (not a bare counter) so a server refresh and a
+  // live 'new-message' event can't clobber each other's count.
+  const [unreadIds, setUnreadIds] = useState(() => new Set());
+  const pendingUnreadRef = useRef(new Set());
 
   const notify = useCallback((message, type = 'info') => {
     const id = ++toastSeq;
@@ -62,9 +65,13 @@ export function AppProvider({ children }) {
   }, []);
 
   const refreshUnread = useCallback(async () => {
+    pendingUnreadRef.current = new Set();
     try {
       const { messages } = await api.getReceived(true);
-      setUnreadCount(messages.length);
+      const ids = new Set(messages.map((m) => m.id));
+      // Keep ids that arrived via socket while this fetch was in flight.
+      pendingUnreadRef.current.forEach((id) => ids.add(id));
+      setUnreadIds(ids);
     } catch (_) {
       // Message tables may not be created yet — ignore.
     }
@@ -140,7 +147,12 @@ export function AppProvider({ children }) {
     const onQr = (dataUrl) => setQr(dataUrl);
     const onLog = (entry) => setLogs((l) => [...l.slice(-249), entry]);
     const onNewMessage = (m) => {
-      setUnreadCount((n) => n + 1);
+      pendingUnreadRef.current.add(m.id);
+      setUnreadIds((prev) => {
+        const next = new Set(prev);
+        next.add(m.id);
+        return next;
+      });
       notify(`New message from ${m.sender_name || '+' + m.sender_number}`, 'info');
     };
 
@@ -179,7 +191,7 @@ export function AppProvider({ children }) {
     // data
     contacts, contactsLoading, loadContacts, groupedContacts,
     selectedIds, selectedContacts, toggleContact, setManySelected, clearSelection,
-    unreadCount, setUnreadCount, refreshUnread,
+    unreadCount: unreadIds.size, refreshUnread,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

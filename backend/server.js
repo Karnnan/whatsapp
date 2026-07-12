@@ -13,7 +13,14 @@ const { supabase, isConfigured } = require('./supabase-client');
 const wa = require('./whatsapp-service');
 
 const PORT = process.env.PORT || 4000;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+// FRONTEND_URL may be a comma-separated list so the same backend can serve a
+// local dashboard AND a deployed one (e.g. http://localhost:3000,https://your-site.netlify.app).
+const FRONTEND_URLS = (process.env.FRONTEND_URL || 'http://localhost:3000')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+// Allow requests with no Origin (curl/health checks) and any listed origin.
+const corsOrigin = (origin, cb) => cb(null, !origin || FRONTEND_URLS.includes(origin));
 
 // --- Uploads ---------------------------------------------------------------
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
@@ -32,10 +39,10 @@ const upload = multer({ storage, limits: { fileSize: 64 * 1024 * 1024 } }); // 6
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: FRONTEND_URL, methods: ['GET', 'POST'] },
+  cors: { origin: FRONTEND_URLS, methods: ['GET', 'POST'] },
 });
 
-app.use(cors({ origin: FRONTEND_URL }));
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 
 wa.attachIo(io);
@@ -427,6 +434,26 @@ app.post('/api/messages/delete', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+app.post('/api/messages/delete-bulk', wrap(async (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids array is required.' });
+  }
+  wa.ensureReady();
+  let revoked = 0;
+  let failed = 0;
+  for (const id of ids) {
+    if (!id) { failed += 1; continue; }
+    try {
+      await wa.revokeMessage(id);
+      revoked += 1;
+    } catch (_) {
+      failed += 1;
+    }
+  }
+  res.json({ ok: true, revoked, failed });
+}));
+
 // ===========================================================================
 // Error handler
 // ===========================================================================
@@ -442,6 +469,6 @@ app.use((err, req, res, next) => {
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`\n🚀 Backend listening on http://localhost:${PORT}`);
-  console.log(`   Accepting the dashboard from ${FRONTEND_URL}\n`);
+  console.log(`   Accepting the dashboard from ${FRONTEND_URLS.join(', ')}\n`);
   wa.initialize();
 });
