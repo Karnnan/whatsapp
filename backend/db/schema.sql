@@ -41,3 +41,28 @@ create table if not exists public.contacts (
 
 create index if not exists contacts_group_id_idx on public.contacts (group_id);
 create index if not exists contacts_phone_idx on public.contacts (phone_number);
+
+-- 4. Inbox: incoming messages received while connected.
+create table if not exists public.received_messages (
+  id            bigint generated always as identity primary key,
+  sender_number text,
+  sender_name   text,
+  message_body  text,
+  wa_message_id text,
+  is_read       boolean not null default false,
+  created_at    timestamptz not null default now()
+);
+create index if not exists received_created_idx on public.received_messages (created_at desc);
+create index if not exists received_unread_idx on public.received_messages (is_read);
+
+-- 5. Sent history: messages sent via Quick Send / Broadcast, for "delete for everyone".
+create table if not exists public.sent_messages (
+  id                  bigint generated always as identity primary key,
+  recipient_number    text,
+  message_body        text,
+  media_type          text,          -- text | media | voice
+  whatsapp_message_id text,          -- WhatsApp message id, needed to revoke
+  revoked             boolean not null default false,
+  created_at          timestamptz not null default now()
+);
+create index if not exists sent_created_idx on public.sent_messages (created_at desc);

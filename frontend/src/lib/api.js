@@ -70,6 +70,23 @@ export const api = {
     }).then(handle),
   deleteKeyword: (id) => fetch(`${API_URL}/api/keywords/${id}`, { method: 'DELETE' }).then(handle),
 
+  // Messages — inbox & sent history
+  getReceived: (unreadOnly) =>
+    fetch(`${API_URL}/api/messages/received${unreadOnly ? '?unreadOnly=true' : ''}`).then(handle),
+  markReceivedRead: (ids) =>
+    fetch(`${API_URL}/api/messages/received/read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }).then(handle),
+  getSent: () => fetch(`${API_URL}/api/messages/sent`).then(handle),
+  deleteMessage: (whatsapp_message_id) =>
+    fetch(`${API_URL}/api/messages/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ whatsapp_message_id }),
+    }).then(handle),
+
   // Settings
   getSettings: () => fetch(`${API_URL}/api/settings`).then(handle),
   setAutoReply: (enabled) =>

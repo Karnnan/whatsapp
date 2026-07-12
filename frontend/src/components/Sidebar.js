@@ -6,13 +6,15 @@ const NAV = [
   { key: 'connection', label: 'Connection', icon: '🔗' },
   { key: 'extraction', label: 'Extraction', icon: '👥' },
   { key: 'contacts', label: 'Contacts', icon: '📇' },
+  { key: 'inbox', label: 'Inbox', icon: '📥' },
+  { key: 'outbox', label: 'Sent History', icon: '📤' },
   { key: 'broadcast', label: 'Broadcast', icon: '📢' },
   { key: 'quicksend', label: 'Quick Send', icon: '⚡' },
   { key: 'keywords', label: 'Auto-Reply', icon: '🤖' },
 ];
 
 export default function Sidebar({ open, onNavigate }) {
-  const { activeView, setActiveView, selectedIds, contacts } = useApp();
+  const { activeView, setActiveView, selectedIds, contacts, unreadCount } = useApp();
 
   return (
     <aside className={`sidebar ${open ? 'open' : ''}`}>
@@ -28,6 +30,9 @@ export default function Sidebar({ open, onNavigate }) {
             <span className="nav-label">{n.label}</span>
             {n.key === 'contacts' && contacts.length > 0 && (
               <span className="nav-badge">{contacts.length}</span>
+            )}
+            {n.key === 'inbox' && unreadCount > 0 && (
+              <span className="nav-badge nav-badge-red">{unreadCount}</span>
             )}
             {n.key === 'broadcast' && selectedIds.size > 0 && (
               <span className="nav-badge nav-badge-violet">{selectedIds.size}</span>

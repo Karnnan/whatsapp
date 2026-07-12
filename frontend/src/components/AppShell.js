@@ -11,11 +11,15 @@ import ContactsView from './views/ContactsView';
 import BroadcastView from './views/BroadcastView';
 import QuickSendView from './views/QuickSendView';
 import KeywordsView from './views/KeywordsView';
+import InboxView from './views/InboxView';
+import OutboxView from './views/OutboxView';
 
 const VIEWS = {
   connection: ConnectionView,
   extraction: ExtractionView,
   contacts: ContactsView,
+  inbox: InboxView,
+  outbox: OutboxView,
   broadcast: BroadcastView,
   quicksend: QuickSendView,
   keywords: KeywordsView,

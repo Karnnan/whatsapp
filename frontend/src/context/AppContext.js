@@ -32,6 +32,7 @@ export function AppProvider({ children }) {
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const notify = useCallback((message, type = 'info') => {
     const id = ++toastSeq;
@@ -57,6 +58,15 @@ export function AppProvider({ children }) {
       // Silent — surfaced elsewhere; avoids toast spam if the DB isn't ready.
     } finally {
       setContactsLoading(false);
+    }
+  }, []);
+
+  const refreshUnread = useCallback(async () => {
+    try {
+      const { messages } = await api.getReceived(true);
+      setUnreadCount(messages.length);
+    } catch (_) {
+      // Message tables may not be created yet — ignore.
     }
   }, []);
 
@@ -129,12 +139,17 @@ export function AppProvider({ children }) {
     const onStatus = (s) => { socketStatusRef.current = true; applyStatus(s); };
     const onQr = (dataUrl) => setQr(dataUrl);
     const onLog = (entry) => setLogs((l) => [...l.slice(-249), entry]);
+    const onNewMessage = (m) => {
+      setUnreadCount((n) => n + 1);
+      notify(`New message from ${m.sender_name || '+' + m.sender_number}`, 'info');
+    };
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('status', onStatus);
     socket.on('qr', onQr);
     socket.on('log', onLog);
+    socket.on('new-message', onNewMessage);
 
     api.getStatus()
       .then((s) => {
@@ -144,6 +159,7 @@ export function AppProvider({ children }) {
       .catch(() => {});
 
     loadContacts();
+    refreshUnread();
 
     return () => {
       socket.off('connect', onConnect);
@@ -151,8 +167,9 @@ export function AppProvider({ children }) {
       socket.off('status', onStatus);
       socket.off('qr', onQr);
       socket.off('log', onLog);
+      socket.off('new-message', onNewMessage);
     };
-  }, [loadContacts]);
+  }, [loadContacts, refreshUnread, notify]);
 
   const value = {
     // connection
@@ -162,6 +179,7 @@ export function AppProvider({ children }) {
     // data
     contacts, contactsLoading, loadContacts, groupedContacts,
     selectedIds, selectedContacts, toggleContact, setManySelected, clearSelection,
+    unreadCount, setUnreadCount, refreshUnread,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

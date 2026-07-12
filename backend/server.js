@@ -369,6 +369,62 @@ app.put('/api/settings', wrap(async (req, res) => {
 }));
 
 // ===========================================================================
+// Messages: inbox (received) & sent history / revoke
+// ===========================================================================
+// True when a Supabase error means the table hasn't been created yet.
+// Covers direct Postgres (42P01) and PostgREST schema-cache misses (PGRST205).
+const isMissingTable = (error) =>
+  error &&
+  (error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    /does not exist|could not find the table|schema cache/i.test(error.message || ''));
+
+app.get('/api/messages/received', wrap(async (req, res) => {
+  const unreadOnly = req.query.unreadOnly === 'true';
+  let query = supabase
+    .from('received_messages')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (unreadOnly) query = query.eq('is_read', false);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingTable(error)) return res.json({ messages: [], needsSetup: true });
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ messages: data || [] });
+}));
+
+app.post('/api/messages/received/read', wrap(async (req, res) => {
+  const { ids } = req.body || {};
+  let query = supabase.from('received_messages').update({ is_read: true });
+  query = Array.isArray(ids) && ids.length ? query.in('id', ids) : query.eq('is_read', false);
+  const { error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+}));
+
+app.get('/api/messages/sent', wrap(async (req, res) => {
+  const { data, error } = await supabase
+    .from('sent_messages')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (error) {
+    if (isMissingTable(error)) return res.json({ messages: [], needsSetup: true });
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ messages: data || [] });
+}));
+
+app.post('/api/messages/delete', wrap(async (req, res) => {
+  const { whatsapp_message_id } = req.body || {};
+  if (!whatsapp_message_id) return res.status(400).json({ error: 'whatsapp_message_id is required.' });
+  await wa.revokeMessage(whatsapp_message_id);
+  res.json({ ok: true });
+}));
+
+// ===========================================================================
 // Error handler
 // ===========================================================================
 // eslint-disable-next-line no-unused-vars

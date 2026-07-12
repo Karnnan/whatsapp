@@ -317,7 +317,8 @@ class WhatsAppService {
       throw err;
     }
     const chatId = this.toChatId(number);
-    await this.client.sendMessage(chatId, text);
+    const sentMsg = await this.client.sendMessage(chatId, text);
+    await this.recordSent(number, text, 'text', sentMsg);
     this.log(`Text sent to ${number}.`, 'success');
   }
 
@@ -333,7 +334,8 @@ class WhatsAppService {
     if (asVoice) options.sendAudioAsVoice = true;
     if (viewOnce) options.isViewOnce = true;
     if (caption) options.caption = caption;
-    await this.client.sendMessage(chatId, media, options);
+    const sentMsg = await this.client.sendMessage(chatId, media, options);
+    await this.recordSent(number, caption || '', asVoice ? 'voice' : 'media', sentMsg);
     this.log(`${asVoice ? 'Voice note' : 'Media'} sent to ${number}${viewOnce ? ' (view once)' : ''}.`, 'success');
   }
 
@@ -397,15 +399,22 @@ class WhatsAppService {
         const number = numbers[i];
         try {
           const chatId = this.toChatId(number);
+          let sentMsg;
           if (media) {
             const options = {};
             if (asVoice) options.sendAudioAsVoice = true;
             if (viewOnce) options.isViewOnce = true;
             if (caption || text) options.caption = caption || text;
-            await this.client.sendMessage(chatId, media, options);
+            sentMsg = await this.client.sendMessage(chatId, media, options);
           } else {
-            await this.client.sendMessage(chatId, text);
+            sentMsg = await this.client.sendMessage(chatId, text);
           }
+          await this.recordSent(
+            number,
+            media ? (caption || text || '') : text,
+            media ? (asVoice ? 'voice' : 'media') : 'text',
+            sentMsg
+          );
           sent += 1;
         } catch (e) {
           failed += 1;
@@ -436,37 +445,113 @@ class WhatsAppService {
   async handleIncomingMessage(msg) {
     try {
       if (msg.fromMe) return;
-
-      // Only auto-reply to 1:1 chats — never groups (@g.us), status
-      // broadcasts (status@broadcast) or newsletters (@newsletter).
+      // Track only 1:1 chats — never groups (@g.us), status broadcasts or newsletters.
       if (!msg.from || !msg.from.endsWith('@c.us')) return;
 
-      const { data: settingsRow, error: settingsError } = await supabase
-        .from('settings')
-        .select('auto_reply_enabled')
-        .order('id', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-      if (settingsError) return;
-      if (!settingsRow || !settingsRow.auto_reply_enabled) return;
-
-      const body = (msg.body || '').toLowerCase().trim();
-      if (!body) return;
-
-      const { data: keywords, error: kwError } = await supabase
-        .from('keywords')
-        .select('keyword, reply');
-      if (kwError || !keywords || keywords.length === 0) return;
-
-      const match = keywords.find((k) => matchesKeyword(body, (k.keyword || '').toLowerCase()));
-      if (!match) return;
-
-      await msg.reply(match.reply);
-      this.log(`Auto-replied to ${msg.from} (matched "${match.keyword}").`, 'success');
+      await this.recordIncoming(msg);
+      await this.maybeAutoReply(msg);
     } catch (e) {
-      this.log(`Auto-reply error: ${e.message}`, 'error');
+      this.log(`Incoming message error: ${e.message}`, 'error');
     }
+  }
+
+  // Save an incoming direct message to the inbox and alert the dashboard.
+  async recordIncoming(msg) {
+    try {
+      const number = String(msg.from || '').replace('@c.us', '');
+      let senderName = null;
+      try {
+        const contact = await msg.getContact();
+        senderName = contact.name || contact.pushname || null;
+      } catch (_) { /* best effort */ }
+
+      const body = msg.body && msg.body.trim()
+        ? msg.body
+        : (msg.hasMedia ? `[${msg.type || 'media'}]` : '');
+
+      const { data, error } = await supabase
+        .from('received_messages')
+        .insert({
+          sender_number: number,
+          sender_name: senderName,
+          message_body: body,
+          wa_message_id: msg.id ? msg.id._serialized : null,
+          is_read: false,
+        })
+        .select()
+        .single();
+      if (error) {
+        this.log(`Inbox save failed: ${error.message}`, 'error');
+        return;
+      }
+      this.emit('new-message', data);
+    } catch (e) {
+      this.log(`Inbox error: ${e.message}`, 'error');
+    }
+  }
+
+  async maybeAutoReply(msg) {
+    const { data: settingsRow, error: settingsError } = await supabase
+      .from('settings')
+      .select('auto_reply_enabled')
+      .order('id', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (settingsError) return;
+    if (!settingsRow || !settingsRow.auto_reply_enabled) return;
+
+    const body = (msg.body || '').toLowerCase().trim();
+    if (!body) return;
+
+    const { data: keywords, error: kwError } = await supabase
+      .from('keywords')
+      .select('keyword, reply');
+    if (kwError || !keywords || keywords.length === 0) return;
+
+    const match = keywords.find((k) => matchesKeyword(body, (k.keyword || '').toLowerCase()));
+    if (!match) return;
+
+    await msg.reply(match.reply);
+    this.log(`Auto-replied to ${msg.from} (matched "${match.keyword}").`, 'success');
+  }
+
+  // Record a message we sent, so it can later be revoked ("delete for everyone").
+  async recordSent(number, body, mediaType, sentMsg) {
+    try {
+      await supabase.from('sent_messages').insert({
+        recipient_number: String(number).replace(/\D/g, ''),
+        message_body: body || null,
+        media_type: mediaType || 'text',
+        whatsapp_message_id: sentMsg && sentMsg.id ? sentMsg.id._serialized : null,
+      });
+    } catch (_) { /* history is non-critical; never fail a send over it */ }
+  }
+
+  // Delete a previously-sent message for everyone.
+  async revokeMessage(waMessageId) {
+    this.ensureReady();
+    if (!waMessageId) {
+      const err = new Error('Missing WhatsApp message id.');
+      err.statusCode = 400;
+      throw err;
+    }
+    let msg = null;
+    try {
+      msg = await this.client.getMessageById(waMessageId);
+    } catch (_) {
+      msg = null;
+    }
+    if (!msg) {
+      const err = new Error('Message not found on WhatsApp — it may be too old to delete.');
+      err.statusCode = 404;
+      throw err;
+    }
+    await msg.delete(true); // true = delete for everyone
+    try {
+      await supabase.from('sent_messages').update({ revoked: true }).eq('whatsapp_message_id', waMessageId);
+    } catch (_) { /* ignore */ }
+    this.log('Message deleted for everyone.', 'success');
   }
 }
 
