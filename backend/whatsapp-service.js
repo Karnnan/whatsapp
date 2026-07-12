@@ -62,16 +62,37 @@ class WhatsAppService {
       authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
       puppeteer: {
         headless: true,
-        // Use a system-installed Chromium when provided (e.g. in Docker/hosting).
+        // Only used if explicitly set; otherwise Puppeteer's version-matched Chromium.
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        // Aggressive low-memory flags so Chromium fits a 512 MB host (Render free).
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
+          '--disable-gpu',
           '--disable-accelerated-2d-canvas',
+          '--disable-software-rasterizer',
           '--no-first-run',
           '--no-zygote',
-          '--disable-gpu',
+          '--no-default-browser-check',
+          '--mute-audio',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-default-apps',
+          '--disable-sync',
+          '--disable-translate',
+          '--disable-component-update',
+          '--disable-client-side-phishing-detection',
+          '--disable-hang-monitor',
+          '--disable-domain-reliability',
+          '--disable-ipc-flooding-protection',
+          '--metrics-recording-only',
+          '--renderer-process-limit=1',
+          '--js-flags=--max-old-space-size=128',
+          '--disable-features=site-per-process,Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints,IsolateOrigins',
         ],
       },
     });
@@ -119,8 +140,12 @@ class WhatsAppService {
     this.setStatus('INITIALIZING');
     this.log('Starting WhatsApp client…', 'info');
     this.client.initialize().catch((e) => {
-      this.log(`Failed to initialize client: ${e.message}`, 'error');
-      this.setStatus('DISCONNECTED');
+      this.log(`Client init issue: ${e.message}`, 'error');
+      // Don't clobber a QR/READY state that may have been reached despite a
+      // transient Puppeteer error (e.g. "Navigating frame was detached").
+      if (!['QR', 'AUTHENTICATED', 'READY'].includes(this.status)) {
+        this.setStatus('DISCONNECTED');
+      }
     });
   }
 
