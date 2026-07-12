@@ -12,9 +12,10 @@ node_modules/
 frontend/.next/
 frontend/out/
 
-# whatsapp-web.js session & cache
+# WhatsApp session & cache
 backend/.wwebjs_auth/
 backend/.wwebjs_cache/
+backend/baileys_auth/
 backend/uploads/
 
 # misc

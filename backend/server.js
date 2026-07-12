@@ -287,11 +287,11 @@ app.post('/api/send', upload.single('file'), wrap(async (req, res) => {
       await wa.sendText(number, text);
     } else if (type === 'voice') {
       if (!req.file) return res.status(400).json({ error: 'An audio file is required for a voice note.' });
-      await wa.sendMediaFile(number, req.file.path, { asVoice: true, caption });
+      await wa.sendMediaFile(number, req.file.path, { asVoice: true, caption, mimetype: req.file.mimetype });
     } else {
       // media (image/video/document/audio-as-file)
       if (!req.file) return res.status(400).json({ error: 'A file is required.' });
-      await wa.sendMediaFile(number, req.file.path, { asVoice: false, caption, viewOnce });
+      await wa.sendMediaFile(number, req.file.path, { asVoice: false, caption, viewOnce, mimetype: req.file.mimetype });
     }
     res.json({ ok: true });
   } finally {
@@ -349,6 +349,7 @@ app.post('/api/broadcast', upload.single('file'), wrap(async (req, res) => {
       asVoice,
       viewOnce,
       filePath: req.file ? req.file.path : null,
+      mimetype: req.file ? req.file.mimetype : '',
     })
       .catch((e) => wa.log(`Broadcast error: ${e.message}`, 'error'))
       .finally(() => cleanup(req.file));
