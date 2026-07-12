@@ -42,14 +42,18 @@ export default function Dashboard() {
   }, []);
 
   const readyRef = useRef(false);
+  const socketStatusRef = useRef(false);
 
   useEffect(() => {
     const socket = getSocket();
+    // Seed from the live socket so a remount over an already-connected
+    // singleton renders "connected" instead of waiting for the next event.
+    setOnline(socket.connected);
 
-    socket.on('connect', () => setOnline(true));
-    socket.on('disconnect', () => setOnline(false));
-
-    socket.on('status', (s) => {
+    const onConnect = () => setOnline(true);
+    const onDisconnect = () => setOnline(false);
+    const onStatus = (s) => {
+      socketStatusRef.current = true;
       setStatus(s.status);
       setMe(s.me);
       if (s.qr) setQr(s.qr);
@@ -57,14 +61,22 @@ export default function Dashboard() {
         readyRef.current = true;
         loadContacts();
       }
-      if (s.status !== 'READY') readyRef.current = s.status === 'READY';
-    });
-    socket.on('qr', (dataUrl) => setQr(dataUrl));
-    socket.on('log', (entry) => setLogs((l) => [...l.slice(-199), entry]));
+      if (s.status !== 'READY') readyRef.current = false;
+    };
+    const onQr = (dataUrl) => setQr(dataUrl);
+    const onLog = (entry) => setLogs((l) => [...l.slice(-199), entry]);
 
-    // Prime initial state via REST in case we connect after events fired.
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('status', onStatus);
+    socket.on('qr', onQr);
+    socket.on('log', onLog);
+
+    // Prime initial state via REST — but never let this one-shot snapshot
+    // overwrite fresher state already delivered by a live socket event.
     api.getStatus()
       .then((s) => {
+        if (socketStatusRef.current) return;
         setStatus(s.status);
         setMe(s.me);
         if (s.qr) setQr(s.qr);
@@ -75,11 +87,11 @@ export default function Dashboard() {
     loadContacts();
 
     return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('status');
-      socket.off('qr');
-      socket.off('log');
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('status', onStatus);
+      socket.off('qr', onQr);
+      socket.off('log', onLog);
     };
   }, [loadContacts]);
 

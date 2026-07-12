@@ -145,6 +145,18 @@ app.post('/api/broadcast', upload.single('file'), wrap(async (req, res) => {
     const text = req.body.text || '';
     const caption = req.body.caption || '';
 
+    // Validate while we can still return a real status code — this handler
+    // responds 200 before the broadcast runs asynchronously.
+    wa.ensureReady();
+    if (wa.broadcasting) {
+      cleanup(req.file);
+      return res.status(409).json({ error: 'A broadcast is already in progress.' });
+    }
+    if (!text.trim() && !req.file) {
+      cleanup(req.file);
+      return res.status(400).json({ error: 'Provide a message or a file to broadcast.' });
+    }
+
     // Recipients: either an explicit JSON array of numbers, or "all saved contacts".
     let numbers = [];
     if (req.body.numbers) {
@@ -158,11 +170,11 @@ app.post('/api/broadcast', upload.single('file'), wrap(async (req, res) => {
       let query = supabase.from('contacts').select('phone_number');
       if (groupId) query = query.eq('group_id', groupId);
       const { data, error } = await query;
-      if (error) return res.status(500).json({ error: error.message });
+      if (error) { cleanup(req.file); return res.status(500).json({ error: error.message }); }
       numbers = [...new Set((data || []).map((c) => c.phone_number))];
     }
 
-    if (!numbers.length) return res.status(400).json({ error: 'No recipients found.' });
+    if (!numbers.length) { cleanup(req.file); return res.status(400).json({ error: 'No recipients found.' }); }
 
     // Respond immediately; progress is streamed over Socket.io.
     res.json({ ok: true, started: true, recipients: numbers.length });
@@ -227,7 +239,11 @@ app.delete('/api/keywords/:id', wrap(async (req, res) => {
 // Settings (auto-reply toggle)
 // ===========================================================================
 app.get('/api/settings', wrap(async (req, res) => {
-  const { data, error } = await supabase.from('settings').select('*').limit(1);
+  const { data, error } = await supabase
+    .from('settings')
+    .select('*')
+    .order('id', { ascending: true })
+    .limit(1);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ settings: data && data[0] ? data[0] : { auto_reply_enabled: false } });
 }));
@@ -235,8 +251,15 @@ app.get('/api/settings', wrap(async (req, res) => {
 app.put('/api/settings', wrap(async (req, res) => {
   const { auto_reply_enabled } = req.body;
 
-  // Ensure a single settings row exists, then update it.
-  const { data: existing } = await supabase.from('settings').select('id').limit(1);
+  // Ensure a single settings row exists, then update it. Do NOT swallow the
+  // read error — a transient failure must not fall through to an INSERT that
+  // would create a duplicate settings row.
+  const { data: existing, error: readError } = await supabase
+    .from('settings')
+    .select('id')
+    .order('id', { ascending: true })
+    .limit(1);
+  if (readError) return res.status(500).json({ error: readError.message });
   if (existing && existing[0]) {
     const { data, error } = await supabase
       .from('settings')

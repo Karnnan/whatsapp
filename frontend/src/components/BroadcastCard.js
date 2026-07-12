@@ -54,6 +54,7 @@ export default function BroadcastCard({ status, notify, contactsCount }) {
     } catch (e) {
       notify?.(e.message, 'error');
       setRunning(false);
+      setProgress(null);
     }
   }
 

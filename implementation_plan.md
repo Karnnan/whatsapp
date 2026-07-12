@@ -15,6 +15,27 @@ Build a dynamic WhatsApp automation tool with a web dashboard that can:
 9. Allow toggling the auto-reply feature ON/OFF from the dashboard.
 10. Provide a UI to add/edit/delete keyword-reply pairs.
 
+## Feature Updates & Bug Fixes (Based on Latest Review)
+We will implement the following requested UI/UX improvements and fixes:
+
+### 1. Frontend Layout Redesign (Sidebar Menu)
+- **Burger Menu Navigation:** We will replace the single-page view with a Sidebar (Burger Menu). Each feature (Dashboard/Connection, Extraction, Contacts, Broadcast, Quick Send, Keywords) will have its own dedicated view, making the UI much cleaner.
+- **Global Header Indicators:** The "Connection established" status and "Backend connected" badge will be moved above the burger menu (or in a global top nav) so they are permanently visible in the background on every page.
+
+### 2. Group & Extraction Updates
+- **Cancel Extraction Button:** Add a "Cancel" button to stop the extraction process midway if needed. The backend will listen for a cancel event and halt the loop.
+- **Fix "About" Scraping:** The `contact.getAbout()` is currently failing. We will implement a fix (e.g., ensuring we fetch the full contact profile or handling rate limits/privacy settings gracefully).
+
+### 3. Advanced Saved Contacts Management
+- **Group-Wise Display:** In the Contacts view, records will be grouped by their source WhatsApp Group instead of a single massive list.
+- **Selection Toggles:** Add a checkbox (toggle) for each individual contact row.
+- **Select All by Group:** Add a "Select All" checkbox for each group section to easily select/deselect entire groups.
+- **Delete/Clear Records:** Add options to delete individual selected records or clear an entire group's contacts from the database.
+
+### 4. Bulk Broadcast Enhancements
+- **Group-Wise Broadcasting:** In the Bulk Broadcast page, add the ability to select specific WhatsApp groups as recipients, rather than always sending to everyone. It will respect the contact selections made.
+- **"View Once" Option:** Add a toggle in the UI for "View Once". If enabled, any media sent will be marked as view once (`isViewOnce: true` in the WhatsApp payload).
+
 ## User Review Required
 > [!WARNING]
 > **Account Ban Risk:** Sending unsolicited automated messages can trigger WhatsApp's spam filters. We will add random delays between broadcast messages to mimic human behavior. Always use a secondary number for this bot.
@@ -43,31 +64,32 @@ We will build a two-part application backed by Supabase.
 - `Vanilla CSS / CSS Modules`: For sleek, rich aesthetics (dark mode, glassmorphism, micro-animations) without Tailwind, as per guidelines.
 - `socket.io-client`: To receive real-time QR codes and progress updates from the backend.
 - `exceljs`: To generate downloadable Excel files directly in the browser.
+- **React Context / State:** To manage global state like active sidebar tab and selected contacts for broadcasting.
 
 ### 3. Database (Supabase)
-Tables to create in Supabase:
+Tables to create/update in Supabase:
 - `keywords` (id, keyword string, reply string)
 - `settings` (id, auto_reply_enabled boolean)
-- `contacts` (id, phone_number, name, pushname, about_text, group_id)
+- `contacts` (id, phone_number, name, pushname, about_text, group_id, group_name)
 
-### File Structure
+### File Structure (Updates)
 ```
 whatsappapi/
-├── backend/                  # Node.js Bot Service
+├── backend/
 │   ├── package.json
-│   ├── server.js             # Express API & Socket.io server
-│   ├── whatsapp-service.js   # whatsapp-web.js logic
-│   └── supabase-client.js    # Supabase connection
-└── frontend/                 # Next.js Dashboard
+│   ├── server.js
+│   ├── whatsapp-service.js   # Fix About scraping & add cancel extraction
+│   └── supabase-client.js
+└── frontend/
     ├── package.json
-    ├── next.config.mjs
     ├── src/
-    │   ├── app/              # Next.js App Router pages
-    │   │   ├── page.js       # Main Dashboard
-    │   │   ├── layout.js
-    │   │   └── globals.css   # Premium styling
-    │   └── components/       # Reusable UI components
-    └── public/               # Static assets
+    │   ├── app/
+    │   │   ├── page.js       # Now just a container for the active view
+    │   │   └── globals.css
+    │   └── components/
+    │       ├── Sidebar.js    # NEW: Burger Menu
+    │       ├── Header.js     # NEW: Connection Status
+    │       ├── Views/        # NEW: Separate views for Contacts, Broadcast, etc.
 ```
 
 ## Verification Plan
@@ -78,3 +100,4 @@ whatsappapi/
 
 ### Manual Verification
 - We will require you to scan the QR code and test the extraction/auto-reply features on a secondary WhatsApp account.
+- We will verify that the Burger menu navigates correctly and the Contacts selection logic works for Bulk Broadcasts.

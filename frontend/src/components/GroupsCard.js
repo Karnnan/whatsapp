@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { getSocket } from '@/lib/socket';
 
@@ -13,11 +13,16 @@ export default function GroupsCard({ status, notify, onExtracted }) {
 
   const ready = status === 'READY';
 
+  const progressTimer = useRef(null);
+
   useEffect(() => {
     const socket = getSocket();
     const onProgress = (p) => setProgress(p);
     socket.on('extract-progress', onProgress);
-    return () => socket.off('extract-progress', onProgress);
+    return () => {
+      socket.off('extract-progress', onProgress);
+      if (progressTimer.current) clearTimeout(progressTimer.current);
+    };
   }, []);
 
   async function loadGroups() {
@@ -37,6 +42,7 @@ export default function GroupsCard({ status, notify, onExtracted }) {
 
   async function handleExtract() {
     if (!selected) return notify?.('Choose a group first.', 'error');
+    if (progressTimer.current) { clearTimeout(progressTimer.current); progressTimer.current = null; }
     setExtracting(true);
     setProgress({ processed: 0, total: 0 });
     try {
@@ -47,7 +53,10 @@ export default function GroupsCard({ status, notify, onExtracted }) {
       notify?.(e.message, 'error');
     } finally {
       setExtracting(false);
-      setTimeout(() => setProgress(null), 1500);
+      progressTimer.current = setTimeout(() => {
+        setProgress(null);
+        progressTimer.current = null;
+      }, 1500);
     }
   }
 

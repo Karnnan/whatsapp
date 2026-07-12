@@ -297,6 +297,28 @@ class WhatsAppService {
       throw err;
     }
 
+    const hasText = typeof text === 'string' && text.trim().length > 0;
+    if (!hasText && !filePath) {
+      const err = new Error('Broadcast has no content — provide a message or a file.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Deduplicate by normalized chat id so the same person supplied twice (in
+    // any format, e.g. "+1 415…" and "1415…") is only messaged once.
+    const seenChatIds = new Set();
+    numbers = numbers.filter((number) => {
+      let chatId;
+      try {
+        chatId = this.toChatId(number);
+      } catch (_) {
+        return true; // keep invalid entries so the send loop reports the error
+      }
+      if (seenChatIds.has(chatId)) return false;
+      seenChatIds.add(chatId);
+      return true;
+    });
+
     const minDelay = Number(process.env.BROADCAST_MIN_DELAY || 4000);
     const maxDelay = Number(process.env.BROADCAST_MAX_DELAY || 9000);
 
@@ -308,11 +330,12 @@ class WhatsAppService {
     let failed = 0;
     const total = numbers.length;
 
-    // Pre-load media once so we don't read the file for every recipient.
-    let media = null;
-    if (filePath) media = MessageMedia.fromFilePath(filePath);
-
     try {
+      // Pre-load media once so we don't read the file for every recipient.
+      // Kept inside try so a bad file path can't wedge the broadcasting flag.
+      let media = null;
+      if (filePath) media = MessageMedia.fromFilePath(filePath);
+
       for (let i = 0; i < numbers.length; i += 1) {
         const number = numbers[i];
         try {
@@ -356,14 +379,19 @@ class WhatsAppService {
     try {
       if (msg.fromMe) return;
 
-      const { data: settingsRows, error: settingsError } = await supabase
+      // Only auto-reply to 1:1 chats — never groups (@g.us), status
+      // broadcasts (status@broadcast) or newsletters (@newsletter).
+      if (!msg.from || !msg.from.endsWith('@c.us')) return;
+
+      const { data: settingsRow, error: settingsError } = await supabase
         .from('settings')
         .select('auto_reply_enabled')
-        .limit(1);
+        .order('id', { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
       if (settingsError) return;
-      const enabled = settingsRows && settingsRows[0] && settingsRows[0].auto_reply_enabled;
-      if (!enabled) return;
+      if (!settingsRow || !settingsRow.auto_reply_enabled) return;
 
       const body = (msg.body || '').toLowerCase().trim();
       if (!body) return;
@@ -373,7 +401,7 @@ class WhatsAppService {
         .select('keyword, reply');
       if (kwError || !keywords || keywords.length === 0) return;
 
-      const match = keywords.find((k) => k.keyword && body.includes(k.keyword.toLowerCase()));
+      const match = keywords.find((k) => matchesKeyword(body, (k.keyword || '').toLowerCase()));
       if (!match) return;
 
       await msg.reply(match.reply);
@@ -400,6 +428,14 @@ function chunk(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+// Whole-word (boundary) match so a keyword like "hi" doesn't fire on "this".
+// Both arguments are expected to already be lower-cased.
+function matchesKeyword(body, keyword) {
+  if (!keyword) return false;
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:[^\\p{L}\\p{N}]|$)`, 'u').test(body);
 }
 
 module.exports = new WhatsAppService();
