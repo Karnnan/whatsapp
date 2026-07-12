@@ -1,3 +1,16 @@
+// @supabase/supabase-js's realtime client needs a global WebSocket. Node < 22
+// (and some slim Docker images) don't provide one, which crashes
+// @supabase/realtime-js at startup with "native WebSocket not found". Polyfill
+// from 'ws' when it's missing — must run BEFORE requiring supabase-js.
+if (typeof globalThis.WebSocket === 'undefined') {
+  try {
+    // eslint-disable-next-line global-require
+    globalThis.WebSocket = require('ws');
+  } catch (_) {
+    /* ws only needed on older Node; ignore if unavailable */
+  }
+}
+
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 

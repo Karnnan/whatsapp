@@ -25,14 +25,14 @@ const VIEWS = {
   keywords: KeywordsView,
 };
 
-export default function AppShell() {
+export default function AppShell({ onLogout }) {
   const { activeView } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const View = VIEWS[activeView] || ConnectionView;
 
   return (
     <div className="layout">
-      <Header onBurger={() => setDrawerOpen((o) => !o)} />
+      <Header onBurger={() => setDrawerOpen((o) => !o)} onLogout={onLogout} />
       <div className="layout-body">
         <Sidebar open={drawerOpen} onNavigate={() => setDrawerOpen(false)} />
         {drawerOpen && <div className="drawer-scrim" onClick={() => setDrawerOpen(false)} />}

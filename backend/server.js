@@ -47,6 +47,15 @@ app.use(express.json());
 
 wa.attachIo(io);
 
+// --- Auth: in-memory session tokens (cleared on restart -> users re-login) ---
+const activeTokens = new Map(); // token -> { username, at }
+
+io.use((socket, next) => {
+  const token = socket.handshake.auth && socket.handshake.auth.token;
+  if (token && activeTokens.has(token)) return next();
+  return next(new Error('unauthorized'));
+});
+
 io.on('connection', (socket) => {
   // Send the current state to a freshly connected dashboard.
   socket.emit('status', wa.getStatus());
@@ -81,11 +90,55 @@ const chunkArr = (arr, size) => {
 };
 
 // ===========================================================================
-// Health & status
+// Auth gate — every /api route except health + login requires a Bearer token.
+// ===========================================================================
+const PUBLIC_API = new Set(['/api/health', '/api/auth/login']);
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/') || PUBLIC_API.has(req.path)) return next();
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (token && activeTokens.has(token)) return next();
+  return res.status(401).json({ error: 'Unauthorized. Please log in.' });
+});
+
+// ===========================================================================
+// Health & auth
 // ===========================================================================
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, supabaseConfigured: isConfigured });
 });
+
+app.post('/api/auth/login', wrap(async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required.' });
+  }
+  const { data, error } = await supabase
+    .from('users')
+    .select('username, password')
+    .eq('username', username)
+    .maybeSingle();
+  if (error) {
+    if (isMissingTable(error)) {
+      return res.status(503).json({ error: 'Login is not set up yet — run the users table SQL in Supabase.' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  // NOTE: plaintext comparison per request. Hash (bcrypt) for real security.
+  if (!data || data.password !== password) {
+    return res.status(401).json({ error: 'Invalid username or password.' });
+  }
+  const token = crypto.randomBytes(24).toString('hex');
+  activeTokens.set(token, { username: data.username, at: Date.now() });
+  res.json({ ok: true, token, username: data.username });
+}));
+
+app.post('/api/auth/logout', wrap(async (req, res) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (token) activeTokens.delete(token);
+  res.json({ ok: true });
+}));
 
 app.get('/api/status', (req, res) => {
   res.json(wa.getStatus());

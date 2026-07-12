@@ -1,6 +1,7 @@
 'use client';
 
 import { useApp } from '@/context/AppContext';
+import { getUsername } from '@/lib/auth';
 
 const STATUS_LABEL = {
   READY: { cls: 'status-ready', label: 'Connected' },
@@ -10,10 +11,11 @@ const STATUS_LABEL = {
   DISCONNECTED: { cls: 'status-off', label: 'Disconnected' },
 };
 
-export default function Header({ onBurger }) {
+export default function Header({ onBurger, onLogout }) {
   const { status, online, me } = useApp();
   const s = STATUS_LABEL[status] || STATUS_LABEL.INITIALIZING;
   const connectedLabel = status === 'READY' && me?.number ? `Connected · +${me.number}` : s.label;
+  const username = getUsername();
 
   return (
     <header className="topnav">
@@ -38,6 +40,11 @@ export default function Header({ onBurger }) {
           <span className={`dot ${online ? 'pulse' : ''}`} />
           <span className="pill-text">{online ? 'Backend connected' : 'Backend offline'}</span>
         </span>
+        {onLogout && (
+          <button className="btn btn-sm btn-danger" onClick={onLogout} title={username ? `Signed in as ${username}` : 'Log out'}>
+            ⏻ <span className="pill-text">Logout</span>
+          </button>
+        )}
       </div>
     </header>
   );

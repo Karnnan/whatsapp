@@ -66,3 +66,18 @@ create table if not exists public.sent_messages (
   created_at          timestamptz not null default now()
 );
 create index if not exists sent_created_idx on public.sent_messages (created_at desc);
+
+-- 6. Dashboard login users.
+-- NOTE: password is stored in PLAINTEXT per request. This is insecure — anyone
+-- with database access can read it. Prefer hashing (e.g. bcrypt) in production.
+create table if not exists public.users (
+  id         bigint generated always as identity primary key,
+  username   text not null unique,
+  password   text not null,
+  created_at timestamptz not null default now()
+);
+
+-- Seed a default admin (change the password after first login!).
+insert into public.users (username, password)
+select 'admin', 'admin123'
+where not exists (select 1 from public.users);

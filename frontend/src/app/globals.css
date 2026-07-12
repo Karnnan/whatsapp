@@ -1002,3 +1002,43 @@ tbody tr:last-child td { border-bottom: none; }
   flex: none;
   box-shadow: 0 0 8px var(--accent-glow);
 }
+
+/* ============================================================
+   Login
+   ============================================================ */
+.login-wrap {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--panel);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid var(--panel-border-strong);
+  border-radius: var(--radius);
+  padding: 30px 28px;
+  box-shadow: var(--shadow);
+  animation: modal-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+.login-brand h1 { font-size: 20px; }
+.login-error {
+  background: rgba(255, 84, 112, 0.12);
+  border: 1px solid rgba(255, 84, 112, 0.35);
+  color: #ff8098;
+  padding: 10px 13px;
+  border-radius: 11px;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
