@@ -1,6 +1,7 @@
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const { supabase } = require('./supabase-client');
+const { memSnapshot } = require('./mem');
 
 /**
  * Wraps a single whatsapp-web.js client and exposes high-level operations
@@ -126,13 +127,13 @@ class WhatsAppService {
       };
       this.lastQr = null;
       this.setStatus('READY');
-      this.log(`WhatsApp is ready. Connected as ${this.me.pushname || this.me.number || 'unknown'}.`, 'success');
+      this.log(`WhatsApp is ready. Connected as ${this.me.pushname || this.me.number || 'unknown'}. [${memSnapshot()}]`, 'success');
     });
 
     this.client.on('disconnected', (reason) => {
       this.me = null;
       this.setStatus('DISCONNECTED');
-      this.log(`Client disconnected: ${reason}`, 'error');
+      this.log(`Client disconnected: ${reason} [${memSnapshot()}]`, 'error');
     });
 
     this.client.on('message', (msg) => this.handleIncomingMessage(msg));
@@ -140,7 +141,7 @@ class WhatsAppService {
     this.setStatus('INITIALIZING');
     this.log('Starting WhatsApp client…', 'info');
     this.client.initialize().catch((e) => {
-      this.log(`Client init issue: ${e.message}`, 'error');
+      this.log(`Client init issue: ${e.message} [${memSnapshot()}]`, 'error');
       // Don't clobber a QR/READY state that may have been reached despite a
       // transient Puppeteer error (e.g. "Navigating frame was detached").
       if (!['QR', 'AUTHENTICATED', 'READY'].includes(this.status)) {

@@ -11,6 +11,7 @@ const { Server } = require('socket.io');
 
 const { supabase, isConfigured } = require('./supabase-client');
 const wa = require('./whatsapp-service');
+const { startMemoryMonitor } = require('./mem');
 
 // Keep the server alive if whatsapp-web.js / Puppeteer throws a transient error
 // (e.g. "Target closed", "frame detached") instead of crashing the process.
@@ -537,4 +538,6 @@ server.listen(PORT, () => {
   console.log(`\n🚀 Backend listening on http://localhost:${PORT}`);
   console.log(`   Accepting the dashboard from ${FRONTEND_URLS.join(', ')}\n`);
   wa.initialize();
+  // Log container memory (incl. Chromium) + disk every 20s so OOM is visible.
+  startMemoryMonitor(20000, (msg) => console.log(msg));
 });
