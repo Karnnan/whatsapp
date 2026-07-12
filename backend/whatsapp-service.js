@@ -79,6 +79,13 @@ class WhatsAppService {
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
+        // More forgiving timeouts so pairing survives free-tier network latency
+        // and each QR stays valid longer (fewer 408 resets while you scan).
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 25000,
+        qrTimeout: 120000,
+        retryRequestDelayMs: 750,
       });
       this.sock = sock;
 
