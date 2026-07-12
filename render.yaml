@@ -1,0 +1,24 @@
+# Render Blueprint — deploys the Node/Express + whatsapp-web.js BACKEND only.
+# (The Next.js frontend stays on Netlify.) Render reads this file when you
+# create a new "Blueprint" from the repo.
+services:
+  - type: web
+    name: whatsapp-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Secrets — Render will prompt you to enter these (not stored in the repo).
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      # Your deployed dashboard origin (for CORS). Change if your Netlify URL differs.
+      - key: FRONTEND_URL
+        value: https://whatsendz.netlify.app
+      # Use the Chromium installed by the Dockerfile.
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /usr/bin/chromium
