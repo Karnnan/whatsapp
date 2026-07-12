@@ -39,6 +39,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
     }).then(handle),
+  addContacts: (payload) =>
+    fetch(`${API_URL}/api/contacts/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(handle),
   clearContacts: (groupId) =>
     fetch(`${API_URL}/api/contacts${groupId ? `?groupId=${encodeURIComponent(groupId)}` : ''}`, {
       method: 'DELETE',

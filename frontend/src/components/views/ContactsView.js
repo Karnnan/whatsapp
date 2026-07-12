@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { api } from '@/lib/api';
 import SendModal from '@/components/SendModal';
+import ImportContactsModal from '@/components/ImportContactsModal';
 
 export default function ContactsView() {
   const {
@@ -13,11 +14,13 @@ export default function ContactsView() {
   } = useApp();
 
   const [query, setQuery] = useState('');
+  const [groupFilter, setGroupFilter] = useState('all');
   const [target, setTarget] = useState(null);
+  const [showImport, setShowImport] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Apply the search filter, then drop groups with no matches.
+  // Apply the group dropdown + search filters, then drop empty groups.
   const filteredGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const match = (c) =>
@@ -26,9 +29,10 @@ export default function ContactsView() {
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q));
     return groupedContacts
+      .filter((g) => groupFilter === 'all' || (g.groupId || '__none__') === groupFilter)
       .map((g) => ({ ...g, items: g.items.filter(match) }))
       .filter((g) => g.items.length > 0);
-  }, [groupedContacts, query]);
+  }, [groupedContacts, query, groupFilter]);
 
   const visibleCount = filteredGroups.reduce((n, g) => n + g.items.length, 0);
 
@@ -128,21 +132,20 @@ export default function ContactsView() {
     }
   }
 
-  function toggleGroup(g, on) {
-    setManySelected(g.items.map((c) => c.id), on);
-  }
+  const toggleGroup = (g, on) => setManySelected(g.items.map((c) => c.id), on);
 
   return (
     <div className="view">
       <div className="view-head">
         <div>
           <h2>Saved Contacts <span className="badge badge-green">{contacts.length}</span></h2>
-          <p className="muted">Grouped by source WhatsApp group. Select contacts to export, delete or broadcast.</p>
+          <p className="muted">Grouped by source group. Filter, select, import or export — custom groups work everywhere too.</p>
         </div>
         <div className="row" style={{ flex: 'none' }}>
           <button className="btn btn-sm" onClick={loadContacts} disabled={contactsLoading}>
             {contactsLoading ? <span className="spinner" /> : '⟳'} Refresh
           </button>
+          <button className="btn btn-sm btn-violet" onClick={() => setShowImport(true)}>➕ Add / Import</button>
           <button className="btn btn-primary btn-sm" onClick={exportExcel} disabled={exporting || !contacts.length}>
             {exporting ? <span className="spinner" /> : '⬇'} Export {selectedContacts.length ? `Selected (${selectedContacts.length})` : 'All'}
           </button>
@@ -151,13 +154,27 @@ export default function ContactsView() {
       </div>
 
       <div className="card">
-        <div className="field" style={{ marginBottom: 0 }}>
+        <div className="row" style={{ alignItems: 'center' }}>
           <input
             className="input"
+            style={{ flex: 3 }}
             placeholder="🔍  Search by number, name, status or group…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
+          <select
+            className="select"
+            style={{ flex: 2 }}
+            value={groupFilter}
+            onChange={(e) => setGroupFilter(e.target.value)}
+          >
+            <option value="all">All groups ({groupedContacts.length})</option>
+            {groupedContacts.map((g) => (
+              <option key={g.groupId || '__none__'} value={g.groupId || '__none__'}>
+                {g.groupName} ({g.items.length})
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -177,8 +194,8 @@ export default function ContactsView() {
           <div className="empty-state">
             <div className="big">📭</div>
             {contacts.length === 0
-              ? 'No contacts yet. Extract a group first to populate this list.'
-              : 'No contacts match your search.'}
+              ? 'No contacts yet. Extract a group, or use “Add / Import” to enter them manually.'
+              : 'No contacts match your filters.'}
           </div>
         </div>
       ) : (
@@ -186,6 +203,7 @@ export default function ContactsView() {
           const groupIds = g.items.map((c) => c.id);
           const selectedInGroup = groupIds.filter((id) => selectedIds.has(id)).length;
           const allSelected = selectedInGroup === groupIds.length;
+          const isCustom = String(g.groupId || '').startsWith('custom:');
           return (
             <div className="card group-card" key={g.groupId || '__none__'}>
               <div className="group-head">
@@ -198,6 +216,7 @@ export default function ContactsView() {
                     onChange={(e) => toggleGroup(g, e.target.checked)}
                   />
                   <span className="group-name">{g.groupName}</span>
+                  {isCustom && <span className="badge badge-violet">custom</span>}
                 </label>
                 <div className="group-meta">
                   <span className="badge">{g.items.length} contacts</span>
@@ -214,6 +233,7 @@ export default function ContactsView() {
                       <th>Saved Name</th>
                       <th>Public Name</th>
                       <th>About</th>
+                      <th>Group</th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
@@ -231,7 +251,8 @@ export default function ContactsView() {
                         <td className="cell-mono">+{c.phone_number}</td>
                         <td>{c.name || <span className="faint">—</span>}</td>
                         <td className="cell-dim">{c.pushname || <span className="faint">—</span>}</td>
-                        <td className="cell-dim" style={{ maxWidth: 240 }}>{c.about_text || <span className="faint">—</span>}</td>
+                        <td className="cell-dim" style={{ maxWidth: 220 }}>{c.about_text || <span className="faint">—</span>}</td>
+                        <td><span className="badge">{c.group_name || '—'}</span></td>
                         <td>
                           <div className="cell-actions">
                             <button
@@ -254,6 +275,9 @@ export default function ContactsView() {
       )}
 
       <SendModal contact={target} disabled={!ready} notify={notify} onClose={() => setTarget(null)} />
+      {showImport && (
+        <ImportContactsModal onClose={() => setShowImport(false)} onDone={loadContacts} notify={notify} />
+      )}
     </div>
   );
 }

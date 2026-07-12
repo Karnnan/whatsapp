@@ -53,6 +53,23 @@ const cleanup = (file) => {
   if (file && file.path) fs.unlink(file.path, () => {});
 };
 
+// Stable group id for manually-added / imported ("custom") groups, derived
+// from the name so re-adding to the same-named group merges instead of dupes.
+const customGroupId = (name) => {
+  const slug = String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `custom:${slug || 'group'}`;
+};
+
+const chunkArr = (arr, size) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
+
 // ===========================================================================
 // Health & status
 // ===========================================================================
@@ -126,6 +143,54 @@ app.post('/api/contacts/delete', wrap(async (req, res) => {
   const { error } = await supabase.from('contacts').delete().in('id', ids);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true, deleted: ids.length });
+}));
+
+// Manual entry / Excel import — upsert contacts into a custom group.
+// Each contact may carry its own group_name; otherwise the body `groupName`
+// (or "Imported") is used. Numbers are normalized to digits only.
+app.post('/api/contacts/add', wrap(async (req, res) => {
+  const { groupName, contacts } = req.body;
+  if (!Array.isArray(contacts) || contacts.length === 0) {
+    return res.status(400).json({ error: 'contacts array is required.' });
+  }
+  const fallbackName = (groupName && String(groupName).trim()) || 'Imported';
+
+  const records = [];
+  let skipped = 0;
+  for (const c of contacts) {
+    const digits = String(c.phone_number ?? c.phone ?? '').replace(/\D/g, '');
+    if (!digits) { skipped += 1; continue; }
+    const gName = (c.group_name && String(c.group_name).trim()) || fallbackName;
+    records.push({
+      phone_number: digits,
+      name: c.name ? String(c.name).trim() : null,
+      pushname: c.pushname ? String(c.pushname).trim() : null,
+      about_text: c.about_text != null && String(c.about_text).trim() ? String(c.about_text).trim() : null,
+      group_id: customGroupId(gName),
+      group_name: gName,
+    });
+  }
+  if (!records.length) return res.status(400).json({ error: 'No valid phone numbers found.' });
+
+  // Dedupe within the payload so one INSERT can't touch the same (phone, group)
+  // twice (which Postgres ON CONFLICT rejects).
+  const seen = new Set();
+  const deduped = records.filter((r) => {
+    const key = `${r.phone_number}|${r.group_id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  let added = 0;
+  for (const batch of chunkArr(deduped, 200)) {
+    const { error } = await supabase
+      .from('contacts')
+      .upsert(batch, { onConflict: 'phone_number,group_id' });
+    if (error) return res.status(500).json({ error: error.message });
+    added += batch.length;
+  }
+  res.json({ ok: true, added, skipped });
 }));
 
 // ===========================================================================
