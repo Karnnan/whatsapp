@@ -3,8 +3,10 @@
 A two-part WhatsApp automation suite:
 
 - **`backend/`** — a persistent Node.js + Express service that runs the WhatsApp client
-  ([`whatsapp-web.js`](https://github.com/pedroslopez/whatsapp-web.js) / Puppeteer),
-  streams QR codes and live logs over Socket.io, and reads/writes to Supabase.
+  ([Baileys](https://github.com/WhiskeySockets/Baileys) — browserless, it speaks
+  WhatsApp's multi-device protocol directly over WebSocket, so it needs **no
+  Chromium** and runs in ~100 MB), streams QR codes and live logs over Socket.io,
+  and reads/writes to Supabase.
 - **`frontend/`** — a premium Next.js dashboard (dark glassmorphism, no Tailwind) to
   drive everything from the browser.
 - **Supabase** — PostgreSQL database for contacts, keywords and settings.
@@ -45,7 +47,7 @@ A two-part WhatsApp automation suite:
 ```bash
 cd backend
 cp .env.example .env      # then edit .env with your Supabase URL + service_role key
-npm install               # first install downloads Chromium for Puppeteer (~150 MB)
+npm install               # small & fast — no Chromium download (Baileys is browserless)
 npm start
 ```
 
@@ -93,7 +95,7 @@ npm run dev            # runs backend and frontend together
 whatsappapi/
 ├── backend/                  # Node.js bot service
 │   ├── server.js             # Express REST API + Socket.io + multer uploads
-│   ├── whatsapp-service.js   # whatsapp-web.js client, extraction, sending, auto-reply
+│   ├── whatsapp-service.js   # Baileys client, extraction, sending, auto-reply
 │   ├── supabase-client.js    # Supabase connection (service role)
 │   └── db/schema.sql         # Supabase tables
 └── frontend/                 # Next.js dashboard (App Router)
@@ -110,12 +112,11 @@ so the `service_role` key stays server-side.
 
 ## Troubleshooting
 
-- **QR never appears / Puppeteer errors:** ensure the first `npm install` in `backend/`
-  finished downloading Chromium. On Linux you may need extra libs
-  (`libnss3`, `libatk-1.0-0`, `libgbm1`, …).
+- **QR never appears:** check the backend logs — Baileys logs `QR code generated`.
+  No Chromium/system libraries are required (it's browserless).
 - **"Supabase is not configured" warning:** fill in `backend/.env` and restart.
 - **Contacts don't save:** confirm you ran `schema.sql` and used the **service_role** key.
-- **Voice note plays as a file:** use a real audio file (`.mp3`, `.ogg`, `.m4a`); the
-  *Send audio as voice note* option must be on.
-- **Session lost on restart:** the session is cached in `backend/.wwebjs_auth/`; deleting it
-  forces a fresh QR scan.
+- **Voice note plays as a file:** WhatsApp voice notes render best from an `.ogg/opus`
+  file; other formats are sent as push-to-talk but may show as an audio clip.
+- **Session lost on restart:** the session is cached in `backend/baileys_auth/`; deleting it
+  (or an ephemeral host with no persistent disk) forces a fresh QR scan.
