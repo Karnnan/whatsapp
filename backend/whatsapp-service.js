@@ -330,14 +330,18 @@ class WhatsAppService {
     try {
       const res = await this.sock.onWhatsApp(digits);
       if (res && res[0]) {
-        if (res[0].exists) return res[0].jid;
+        if (res[0].exists) {
+          this.log(`Verified +${digits} on WhatsApp → ${res[0].jid}`);
+          return res[0].jid;
+        }
         const err = new Error(`+${digits} is not a WhatsApp number.`);
         err.statusCode = 400;
         throw err;
       }
+      this.log(`+${digits} not found in WhatsApp directory; sending to default address.`, 'warn');
     } catch (e) {
       if (e.statusCode === 400) throw e; // genuine "not on WhatsApp"
-      // network/other error — fall back to the naive JID rather than block
+      this.log(`Could not verify +${digits} (${e.message}); sending to default address.`, 'warn');
     }
     return `${digits}@s.whatsapp.net`;
   }
