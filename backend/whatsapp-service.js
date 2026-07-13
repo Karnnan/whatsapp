@@ -479,6 +479,24 @@ class WhatsAppService {
     }
   }
 
+  // Prefer a real phone-number JID over a LID, so the inbox shows the real
+  // number and replies actually deliver. WhatsApp includes the phone-number
+  // address alongside the LID; we also try the library's LID→PN mapping.
+  async pnJidFor(msg, rawJid) {
+    const alt = (msg && msg.key && (msg.key.remoteJidAlt || msg.key.participantAlt)) || null;
+    if (alt && String(alt).endsWith('@s.whatsapp.net')) return alt;
+    if (String(rawJid).endsWith('@lid')) {
+      try {
+        const map = this.sock && this.sock.signalRepository && this.sock.signalRepository.lidMapping;
+        if (map && typeof map.getPNForLID === 'function') {
+          const pn = await map.getPNForLID(rawJid);
+          if (pn && String(pn).endsWith('@s.whatsapp.net')) return pn;
+        }
+      } catch (_) { /* fall back to the LID */ }
+    }
+    return rawJid;
+  }
+
   async handleIncomingMessage(msg) {
     if (!msg || !msg.message || !msg.key) return;
     if (msg.key.fromMe) return;
@@ -486,8 +504,11 @@ class WhatsAppService {
     // Only 1:1 chats — skip groups (@g.us), status broadcasts and newsletters.
     if (!(jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid'))) return;
 
-    await this.recordIncoming(msg, jid);
-    await this.maybeAutoReply(msg, jid);
+    // Resolve the LID to the real phone-number address when possible.
+    const resolved = await this.pnJidFor(msg, jid);
+
+    await this.recordIncoming(msg, resolved);
+    await this.maybeAutoReply(msg, resolved);
   }
 
   async recordIncoming(msg, jid) {
