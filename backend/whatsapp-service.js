@@ -304,11 +304,40 @@ class WhatsAppService {
   // ---------------------------------------------------------------------------
 
   toChatId(number) {
-    const digits = String(number).replace(/\D/g, '');
+    const str = String(number).trim();
+    if (str.includes('@')) return str; // already a JID
+    const digits = str.replace(/\D/g, '');
     if (!digits) {
       const err = new Error('Invalid phone number.');
       err.statusCode = 400;
       throw err;
+    }
+    return `${digits}@s.whatsapp.net`;
+  }
+
+  // Resolve a number to the ACTUAL routable WhatsApp JID. onWhatsApp() maps the
+  // phone number to the right address (and reports if it isn't a real WhatsApp
+  // number — e.g. a stored LID), so we never silently "send" into the void.
+  async resolveJid(number) {
+    const str = String(number).trim();
+    if (str.includes('@')) return str; // already a JID
+    const digits = str.replace(/\D/g, '');
+    if (!digits) {
+      const err = new Error('Invalid phone number.');
+      err.statusCode = 400;
+      throw err;
+    }
+    try {
+      const res = await this.sock.onWhatsApp(digits);
+      if (res && res[0]) {
+        if (res[0].exists) return res[0].jid;
+        const err = new Error(`+${digits} is not a WhatsApp number.`);
+        err.statusCode = 400;
+        throw err;
+      }
+    } catch (e) {
+      if (e.statusCode === 400) throw e; // genuine "not on WhatsApp"
+      // network/other error — fall back to the naive JID rather than block
     }
     return `${digits}@s.whatsapp.net`;
   }
@@ -320,10 +349,10 @@ class WhatsAppService {
       err.statusCode = 400;
       throw err;
     }
-    const jid = this.toChatId(number);
+    const jid = await this.resolveJid(number);
     const sent = await this.sock.sendMessage(jid, { text });
     await this.recordSent(number, text, 'text', sent);
-    this.log(`Text sent to ${number}.`, 'success');
+    this.log(`Text sent to ${number} → ${jid}.`, 'success');
   }
 
   // Build a Baileys media message content object from a file + options.
@@ -346,7 +375,7 @@ class WhatsAppService {
 
   async sendMediaFile(number, filePath, { asVoice = false, caption = '', viewOnce = false, mimetype = '' } = {}) {
     this.ensureReady();
-    const jid = this.toChatId(number);
+    const jid = await this.resolveJid(number);
     const buffer = fs.readFileSync(filePath);
     const content = this.buildMediaContent(buffer, {
       asVoice, caption, viewOnce, mimetype, fileName: path.basename(filePath),
@@ -407,7 +436,7 @@ class WhatsAppService {
       for (let i = 0; i < numbers.length; i += 1) {
         const number = numbers[i];
         try {
-          const jid = this.toChatId(number);
+          const jid = await this.resolveJid(number);
           const content = mediaContent || { text };
           const msg = await this.sock.sendMessage(jid, content);
           await this.recordSent(
@@ -417,13 +446,18 @@ class WhatsAppService {
             msg
           );
           sent += 1;
+          this.log(`(${i + 1}/${total}) sent to ${number} → ${jid}.`, 'success');
         } catch (e) {
           failed += 1;
-          this.log(`Failed to send to ${number}: ${e.message}`, 'error');
+          this.log(`(${i + 1}/${total}) failed to send to ${number}: ${e.message}`, 'error');
         }
 
         this.emit('broadcast-progress', { processed: i + 1, total, sent, failed, number });
-        if (i < numbers.length - 1) await sleep(randomBetween(minDelay, maxDelay));
+        if (i < numbers.length - 1) {
+          const delay = randomBetween(minDelay, maxDelay);
+          this.log(`⏳ Waiting ${Math.round(delay / 1000)}s before next recipient (human-like delay)…`);
+          await sleep(delay);
+        }
       }
     } finally {
       this.broadcasting = false;
@@ -515,7 +549,9 @@ class WhatsAppService {
     const match = keywords.find((k) => matchesKeyword(body, (k.keyword || '').toLowerCase()));
     if (!match) return;
 
-    await this.sock.sendMessage(jid, { text: match.reply }, { quoted: msg });
+    // Reply straight to the incoming chat JID (no quote — quoting a LID key can
+    // silently fail to deliver).
+    await this.sock.sendMessage(jid, { text: match.reply });
     this.log(`Auto-replied to ${jid} (matched "${match.keyword}").`, 'success');
   }
 
