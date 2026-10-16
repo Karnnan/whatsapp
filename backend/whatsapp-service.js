@@ -28,11 +28,20 @@ class WhatsAppService {
     this.lastQr = null;
     this.me = null; // { pushname, number }
     this.broadcasting = false;
+    this.cancelBroadcastFlag = false;
     this.extracting = false;
     this.cancelExtractFlag = false;
     this.connecting = false;
     this.recentIncomingIds = new Set();
     this.contacts = new Map(); // jid -> { name, notify, verifiedName }
+
+    // Anti-ban default settings: human delays & batching
+    this.broadcastConfig = {
+      minDelay: Number(process.env.BROADCAST_MIN_DELAY || 5000), // ms
+      maxDelay: Number(process.env.BROADCAST_MAX_DELAY || 15000), // ms
+      batchSize: 25,
+      batchDelayMinutes: 5,
+    };
   }
 
   attachIo(io) { this.io = io; }
@@ -51,12 +60,33 @@ class WhatsAppService {
       me: this.me,
       broadcasting: this.broadcasting,
       extracting: this.extracting,
+      broadcastConfig: {
+        minDelay: Math.round(this.broadcastConfig.minDelay / 1000),
+        maxDelay: Math.round(this.broadcastConfig.maxDelay / 1000),
+        batchSize: this.broadcastConfig.batchSize,
+        batchDelayMinutes: this.broadcastConfig.batchDelayMinutes,
+      },
     };
   }
 
   setStatus(status) {
     this.status = status;
     this.emit('status', this.getStatus());
+  }
+
+  setBroadcastConfig(cfg) {
+    if (!cfg || typeof cfg !== 'object') return;
+    if (typeof cfg.minDelay === 'number' && cfg.minDelay >= 1000) this.broadcastConfig.minDelay = cfg.minDelay;
+    if (typeof cfg.maxDelay === 'number' && cfg.maxDelay >= this.broadcastConfig.minDelay) this.broadcastConfig.maxDelay = cfg.maxDelay;
+    if (typeof cfg.batchSize === 'number' && cfg.batchSize >= 1) this.broadcastConfig.batchSize = Math.floor(cfg.batchSize);
+    if (typeof cfg.batchDelayMinutes === 'number' && cfg.batchDelayMinutes >= 0) this.broadcastConfig.batchDelayMinutes = cfg.batchDelayMinutes;
+  }
+
+  cancelBroadcast() {
+    if (this.broadcasting) {
+      this.cancelBroadcastFlag = true;
+      this.log('🛑 Cancellation requested for active broadcast...', 'warn');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -390,7 +420,18 @@ class WhatsAppService {
     this.log(`${asVoice ? 'Voice note' : 'Media'} sent to ${number}${viewOnce ? ' (view once)' : ''}.`, 'success');
   }
 
-  async broadcast(numbers, { text = '', filePath = null, mimetype = '', asVoice = false, caption = '', viewOnce = false } = {}) {
+  async broadcast(numbers, {
+    text = '',
+    filePath = null,
+    mimetype = '',
+    asVoice = false,
+    caption = '',
+    viewOnce = false,
+    minDelay: customMinDelay,
+    maxDelay: customMaxDelay,
+    batchSize: customBatchSize,
+    batchDelayMinutes: customBatchDelayMinutes,
+  } = {}) {
     this.ensureReady();
     if (this.broadcasting) {
       const err = new Error('A broadcast is already in progress.');
@@ -419,16 +460,43 @@ class WhatsAppService {
       return true;
     });
 
-    const minDelay = Number(process.env.BROADCAST_MIN_DELAY || 4000);
-    const maxDelay = Number(process.env.BROADCAST_MAX_DELAY || 9000);
+    const minDelay = customMinDelay != null && Number(customMinDelay) >= 1000
+      ? Number(customMinDelay)
+      : this.broadcastConfig.minDelay;
+    const maxDelay = customMaxDelay != null && Number(customMaxDelay) >= minDelay
+      ? Number(customMaxDelay)
+      : this.broadcastConfig.maxDelay;
+    const batchSize = customBatchSize != null && Number(customBatchSize) >= 1
+      ? Math.floor(Number(customBatchSize))
+      : this.broadcastConfig.batchSize;
+    const batchDelayMinutes = customBatchDelayMinutes != null && Number(customBatchDelayMinutes) >= 0
+      ? Number(customBatchDelayMinutes)
+      : this.broadcastConfig.batchDelayMinutes;
+    const batchDelayMs = Math.round(batchDelayMinutes * 60 * 1000);
 
     this.broadcasting = true;
+    this.cancelBroadcastFlag = false;
     this.emit('status', this.getStatus());
-    this.log(`Starting broadcast to ${numbers.length} recipients…`);
+
+    const total = numbers.length;
+    const totalBatches = Math.ceil(total / batchSize);
+    this.log(`🚀 Starting broadcast to ${total} recipients across ${totalBatches} batch(es) (Batch size: ${batchSize}, Delay: ${Math.round(minDelay / 1000)}–${Math.round(maxDelay / 1000)}s, Batch Rest: ${batchDelayMinutes}m)…`);
 
     let sent = 0;
     let failed = 0;
-    const total = numbers.length;
+    let cancelled = false;
+
+    // Helper for cancellable pause with second-by-second cancellation responsiveness
+    const cancellableSleep = async (ms, onTick) => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        if (this.cancelBroadcastFlag) return false;
+        const leftMs = Math.max(0, end - Date.now());
+        if (onTick) onTick(Math.ceil(leftMs / 1000));
+        await sleep(Math.min(1000, leftMs));
+      }
+      return !this.cancelBroadcastFlag;
+    };
 
     try {
       let buffer = null;
@@ -438,6 +506,13 @@ class WhatsAppService {
         : null;
 
       for (let i = 0; i < numbers.length; i += 1) {
+        if (this.cancelBroadcastFlag) {
+          cancelled = true;
+          this.log('🛑 Broadcast cancelled by user.', 'warn');
+          break;
+        }
+
+        const currentBatch = Math.floor(i / batchSize) + 1;
         const number = numbers[i];
         try {
           const jid = await this.resolveJid(number);
@@ -450,26 +525,96 @@ class WhatsAppService {
             msg
           );
           sent += 1;
-          this.log(`(${i + 1}/${total}) sent to ${number} → ${jid}.`, 'success');
+          this.log(`[Batch ${currentBatch}/${totalBatches}] (${i + 1}/${total}) sent to ${number} → ${jid}.`, 'success');
         } catch (e) {
           failed += 1;
-          this.log(`(${i + 1}/${total}) failed to send to ${number}: ${e.message}`, 'error');
+          this.log(`[Batch ${currentBatch}/${totalBatches}] (${i + 1}/${total}) failed to send to ${number}: ${e.message}`, 'error');
         }
 
-        this.emit('broadcast-progress', { processed: i + 1, total, sent, failed, number });
+        this.emit('broadcast-progress', {
+          processed: i + 1,
+          total,
+          sent,
+          failed,
+          number,
+          currentBatch,
+          totalBatches,
+          batchSize,
+          isBatchPause: false,
+        });
+
         if (i < numbers.length - 1) {
-          const delay = randomBetween(minDelay, maxDelay);
-          this.log(`⏳ Waiting ${Math.round(delay / 1000)}s before next recipient (human-like delay)…`);
-          await sleep(delay);
+          if (this.cancelBroadcastFlag) {
+            cancelled = true;
+            this.log('🛑 Broadcast cancelled by user.', 'warn');
+            break;
+          }
+
+          const isEndOfBatch = (i + 1) % batchSize === 0;
+          if (isEndOfBatch && batchDelayMs > 0) {
+            this.log(`☕ Batch ${currentBatch}/${totalBatches} completed (${i + 1}/${total} messages processed). Resting account for ${batchDelayMinutes} min to prevent spam detection…`, 'warn');
+
+            this.emit('broadcast-progress', {
+              processed: i + 1,
+              total,
+              sent,
+              failed,
+              currentBatch,
+              totalBatches,
+              batchSize,
+              isBatchPause: true,
+              pauseSecondsLeft: batchDelayMinutes * 60,
+              nextBatch: currentBatch + 1,
+            });
+
+            const ok = await cancellableSleep(batchDelayMs, (secsLeft) => {
+              this.emit('broadcast-progress', {
+                processed: i + 1,
+                total,
+                sent,
+                failed,
+                currentBatch,
+                totalBatches,
+                batchSize,
+                isBatchPause: true,
+                pauseSecondsLeft: secsLeft,
+                nextBatch: currentBatch + 1,
+              });
+            });
+
+            if (!ok) {
+              cancelled = true;
+              this.log('🛑 Broadcast cancelled during batch rest period.', 'warn');
+              break;
+            }
+          } else {
+            const delay = randomBetween(minDelay, maxDelay);
+            this.log(`⏳ Waiting ${Math.round(delay / 1000)}s before next contact…`);
+            const ok = await cancellableSleep(delay);
+            if (!ok) {
+              cancelled = true;
+              this.log('🛑 Broadcast cancelled by user.', 'warn');
+              break;
+            }
+          }
         }
       }
     } finally {
       this.broadcasting = false;
+      this.cancelBroadcastFlag = false;
       this.emit('status', this.getStatus());
+      this.emit('broadcast-progress', {
+        processed: sent + failed,
+        total,
+        sent,
+        failed,
+        done: true,
+        cancelled,
+      });
     }
 
-    this.log(`Broadcast finished — ${sent} sent, ${failed} failed.`, 'success');
-    return { total, sent, failed };
+    this.log(`Broadcast ${cancelled ? 'halted' : 'finished'} — ${sent} sent, ${failed} failed.`, cancelled ? 'warn' : 'success');
+    return { total, sent, failed, cancelled };
   }
 
   // ---------------------------------------------------------------------------

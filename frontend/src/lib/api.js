@@ -82,6 +82,7 @@ export const api = {
   // Send
   send: (formData) => sendForm('/api/send', formData),
   broadcast: (formData) => sendForm('/api/broadcast', formData),
+  cancelBroadcast: () => fetch(`${API_URL}/api/broadcast/cancel`, { method: 'POST', headers: authHeaders() }).then(handle),
 
   // Messages — inbox & sent history
   getReceived: (unreadOnly) => getJson(`/api/messages/received${unreadOnly ? '?unreadOnly=true' : ''}`),
@@ -98,5 +99,6 @@ export const api = {
 
   // Settings
   getSettings: () => getJson('/api/settings'),
+  updateSettings: (payload) => sendJson('/api/settings', 'PUT', payload),
   setAutoReply: (enabled) => sendJson('/api/settings', 'PUT', { auto_reply_enabled: enabled }),
 };

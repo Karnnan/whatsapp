@@ -13,16 +13,26 @@ create table if not exists public.keywords (
   created_at  timestamptz not null default now()
 );
 
--- 2. Single-row settings table (feature toggles).
+-- 2. Single-row settings table (feature toggles and anti-ban configuration).
 create table if not exists public.settings (
-  id                 bigint generated always as identity primary key,
-  auto_reply_enabled boolean not null default false,
-  updated_at         timestamptz not null default now()
+  id                  bigint generated always as identity primary key,
+  auto_reply_enabled  boolean not null default false,
+  broadcast_min_delay integer not null default 5,       -- seconds between individual messages (minimum)
+  broadcast_max_delay integer not null default 15,      -- seconds between individual messages (maximum)
+  batch_size          integer not null default 25,      -- how many messages per batch
+  batch_delay_minutes integer not null default 5,       -- minutes to pause between batches to protect account
+  updated_at          timestamptz not null default now()
 );
 
+-- Migrations for existing setups:
+alter table public.settings add column if not exists broadcast_min_delay integer default 5;
+alter table public.settings add column if not exists broadcast_max_delay integer default 15;
+alter table public.settings add column if not exists batch_size integer default 25;
+alter table public.settings add column if not exists batch_delay_minutes integer default 5;
+
 -- Seed exactly one settings row if the table is empty.
-insert into public.settings (auto_reply_enabled)
-select false
+insert into public.settings (auto_reply_enabled, broadcast_min_delay, broadcast_max_delay, batch_size, batch_delay_minutes)
+select false, 5, 15, 25, 5
 where not exists (select 1 from public.settings);
 
 -- 3. Extracted contacts. Unique per (phone_number, group_id) so re-extracting
@@ -77,7 +87,11 @@ create table if not exists public.users (
   created_at timestamptz not null default now()
 );
 
--- Seed a default admin (change the password after first login!).
+-- Seed default login users.
+insert into public.users (username, password)
+select 'karnnan', 'karnnan123'
+where not exists (select 1 from public.users where username = 'karnnan');
+
 insert into public.users (username, password)
 select 'admin', 'admin123'
-where not exists (select 1 from public.users);
+where not exists (select 1 from public.users where username = 'admin');

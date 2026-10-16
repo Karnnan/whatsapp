@@ -11,6 +11,7 @@ const NAV = [
   { key: 'broadcast', label: 'Broadcast', icon: '📢' },
   { key: 'quicksend', label: 'Quick Send', icon: '⚡' },
   { key: 'keywords', label: 'Auto-Reply', icon: '🤖' },
+  { key: 'settings', label: 'Settings', icon: '⚙️' },
 ];
 
 export default function Sidebar({ open, onNavigate }) {

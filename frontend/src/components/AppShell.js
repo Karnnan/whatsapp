@@ -13,6 +13,7 @@ import QuickSendView from './views/QuickSendView';
 import KeywordsView from './views/KeywordsView';
 import InboxView from './views/InboxView';
 import OutboxView from './views/OutboxView';
+import SettingsView from './views/SettingsView';
 
 const VIEWS = {
   connection: ConnectionView,
@@ -23,6 +24,7 @@ const VIEWS = {
   broadcast: BroadcastView,
   quicksend: QuickSendView,
   keywords: KeywordsView,
+  settings: SettingsView,
 };
 
 export default function AppShell({ onLogout }) {
