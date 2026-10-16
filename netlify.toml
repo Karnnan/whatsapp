@@ -10,6 +10,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  NEXT_PUBLIC_API_URL = "https://whatsapp-suad.onrender.com"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
