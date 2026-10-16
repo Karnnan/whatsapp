@@ -95,3 +95,10 @@ where not exists (select 1 from public.users where username = 'karnnan');
 insert into public.users (username, password)
 select 'admin', 'admin123'
 where not exists (select 1 from public.users where username = 'admin');
+
+-- 7. WhatsApp Baileys session store (preserves connection across container restarts / sleep).
+create table if not exists public.whatsapp_session (
+  filename   text primary key,
+  data       text not null,
+  updated_at timestamptz not null default now()
+);

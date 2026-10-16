@@ -43,6 +43,7 @@ class WhatsAppService {
       batchSize: 25,
       batchDelayMinutes: 5,
     };
+    this.syncTimer = null;
   }
 
   attachIo(io) { this.io = io; }
@@ -91,6 +92,110 @@ class WhatsAppService {
   }
 
   // ---------------------------------------------------------------------------
+  // Supabase-backed Auth Persistence (survives container reboots & sleep)
+  // ---------------------------------------------------------------------------
+
+  async restoreAuthFromDb() {
+    try {
+      const { data, error } = await supabase
+        .from('whatsapp_session')
+        .select('filename, data');
+
+      if (error) {
+        if (error.code === '42P01' || (error.message && error.message.includes('whatsapp_session'))) {
+          this.log('ℹ️ Table whatsapp_session not found in Supabase. Run backend/db/schema.sql to persist auth across server restarts.', 'warn');
+        } else {
+          this.log(`Session restore from Supabase skipped: ${error.message}`, 'warn');
+        }
+        return false;
+      }
+
+      if (!data || data.length === 0) {
+        return false;
+      }
+
+      if (!fs.existsSync(AUTH_DIR)) {
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      }
+
+      let restored = 0;
+      for (const row of data) {
+        if (row && row.filename && typeof row.data === 'string') {
+          const targetFile = path.join(AUTH_DIR, row.filename);
+          fs.writeFileSync(targetFile, row.data, 'utf8');
+          restored++;
+        }
+      }
+
+      if (restored > 0) {
+        this.log(`Restored ${restored} session files from database. Reconnecting automatically without QR scan!`, 'success');
+        return true;
+      }
+      return false;
+    } catch (err) {
+      this.log(`Session restore warning: ${err.message}`, 'warn');
+      return false;
+    }
+  }
+
+  scheduleSyncAuth() {
+    if (this.syncTimer) clearTimeout(this.syncTimer);
+    this.syncTimer = setTimeout(() => {
+      this.syncAuthToDb().catch(() => {});
+    }, 1500);
+  }
+
+  async syncAuthToDb() {
+    if (!fs.existsSync(AUTH_DIR)) return;
+    try {
+      const files = fs.readdirSync(AUTH_DIR).filter((f) => f.endsWith('.json'));
+      if (files.length === 0) return;
+
+      const rows = [];
+      const now = new Date().toISOString();
+
+      for (const file of files) {
+        const filePath = path.join(AUTH_DIR, file);
+        try {
+          const content = fs.readFileSync(filePath, 'utf8');
+          rows.push({
+            filename: file,
+            data: content,
+            updated_at: now,
+          });
+        } catch (_) {}
+      }
+
+      if (rows.length === 0) return;
+
+      for (let i = 0; i < rows.length; i += 50) {
+        const chunk = rows.slice(i, i + 50);
+        const { error } = await supabase
+          .from('whatsapp_session')
+          .upsert(chunk, { onConflict: 'filename' });
+
+        if (error && error.code !== '42P01') {
+          this.log(`Session sync warning: ${error.message}`, 'warn');
+          return;
+        }
+      }
+    } catch (err) {
+      this.log(`Session sync error: ${err.message}`, 'warn');
+    }
+  }
+
+  async clearAuth() {
+    if (this.syncTimer) {
+      clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+    try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+    try {
+      await supabase.from('whatsapp_session').delete().neq('filename', '');
+    } catch (_) { /* ignore */ }
+  }
+
+  // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
 
@@ -98,6 +203,13 @@ class WhatsAppService {
     if (this.connecting) return;
     this.connecting = true;
     try {
+      // If local disk doesn't have credentials yet (e.g. after container restart or cold boot),
+      // restore the saved session from Supabase database.
+      const credsExists = fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
+      if (!credsExists) {
+        await this.restoreAuthFromDb();
+      }
+
       const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
       const { version } = await fetchLatestBaileysVersion();
 
@@ -119,7 +231,10 @@ class WhatsAppService {
       });
       this.sock = sock;
 
-      sock.ev.on('creds.update', saveCreds);
+      sock.ev.on('creds.update', async () => {
+        await saveCreds();
+        this.scheduleSyncAuth();
+      });
       sock.ev.on('connection.update', (u) => this.onConnectionUpdate(u));
       sock.ev.on('messages.upsert', (m) => this.onMessagesUpsert(m));
       sock.ev.on('contacts.upsert', (list) => this.mergeContacts(list));
@@ -165,33 +280,32 @@ class WhatsAppService {
       this.lastQr = null;
       this.setStatus('READY');
       this.log(`WhatsApp is ready. Connected as ${this.me.pushname || this.me.number || 'unknown'}. [${memSnapshot()}]`, 'success');
+      // Save authenticated session to DB immediately upon connecting
+      this.scheduleSyncAuth();
     }
 
     if (connection === 'close') {
       const code = lastDisconnect && lastDisconnect.error && lastDisconnect.error.output
         ? lastDisconnect.error.output.statusCode
         : null;
-      const loggedOut = code === DisconnectReason.loggedOut || code === 401 || code === 403;
-      const wasReady = !!this.me;
+      const loggedOut = code === DisconnectReason.loggedOut || code === 401;
       this.me = null;
       this.sock = null;
 
-      if (loggedOut || !wasReady) {
-        // Reset auth folder so failed/rejected pairing does not poison the next QR scan
-        this.log(`Session closed (code ${code}) — resetting credentials for a clean QR scan… [${memSnapshot()}]`, 'warn');
-        this.clearAuth();
+      if (loggedOut) {
+        // Explicit logout by user from phone or web
+        this.log(`Device unlinked (code ${code}) — clearing credentials for clean re-pairing… [${memSnapshot()}]`, 'warn');
+        this.clearAuth().catch(() => {});
         this.setStatus('INITIALIZING');
         setTimeout(() => this.initialize().catch(() => {}), 1500);
       } else {
-        this.log(`Connection closed (code ${code}) — reconnecting… [${memSnapshot()}]`, 'error');
+        // Transient disconnect (network drop, WhatsApp server maintenance, container awake, etc.)
+        this.log(`Connection dropped (code ${code || 'network'}) — auto-reconnecting… [${memSnapshot()}]`, 'info');
         this.setStatus('DISCONNECTED');
-        setTimeout(() => this.initialize().catch(() => {}), 2500);
+        const retryDelay = (code === DisconnectReason.restartRequired || code === 515) ? 1000 : 3500;
+        setTimeout(() => this.initialize().catch(() => {}), retryDelay);
       }
     }
-  }
-
-  clearAuth() {
-    try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) { /* ignore */ }
   }
 
   async logout() {
@@ -201,7 +315,7 @@ class WhatsAppService {
     this.sock = null;
     this.me = null;
     this.lastQr = null;
-    this.clearAuth();
+    await this.clearAuth();
     this.setStatus('INITIALIZING');
     setTimeout(() => this.initialize().catch(() => {}), 1500);
   }

@@ -57,12 +57,47 @@ app.use(express.json());
 
 wa.attachIo(io);
 
-// --- Auth: in-memory session tokens (cleared on restart -> users re-login) ---
-const activeTokens = new Map(); // token -> { username, at }
+// --- Auth: Stateless HMAC signed session tokens (persists across server reboots) ---
+const AUTH_SECRET = process.env.SUPABASE_SERVICE_KEY || process.env.AUTH_SECRET || 'whatsendz-secure-secret-key-salt';
+const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const activeTokens = new Map(); // token -> { username, at } fallback for active memory sessions
+
+function createSessionToken(username) {
+  const payload = Buffer.from(JSON.stringify({
+    u: username,
+    exp: Date.now() + TOKEN_TTL_MS,
+    nonce: crypto.randomBytes(8).toString('hex'),
+  })).toString('base64url');
+  const sig = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifySessionToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  if (activeTokens.has(token)) return activeTokens.get(token);
+
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  const expectedSig = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url');
+
+  if (sig.length !== expectedSig.length) return null;
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expectedSig);
+  if (!crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!data.u || !data.exp || Date.now() > data.exp) return null;
+    return { username: data.u, at: data.exp - TOKEN_TTL_MS };
+  } catch (_) {
+    return null;
+  }
+}
 
 io.use((socket, next) => {
   const token = socket.handshake.auth && socket.handshake.auth.token;
-  if (token && activeTokens.has(token)) return next();
+  if (token && verifySessionToken(token)) return next();
   return next(new Error('unauthorized'));
 });
 
@@ -111,7 +146,11 @@ app.use((req, res, next) => {
   if (!p.startsWith('/api/') || PUBLIC_API.has(p)) return next();
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (token && activeTokens.has(token)) return next();
+  const user = token && verifySessionToken(token);
+  if (user) {
+    req.user = user;
+    return next();
+  }
   return res.status(401).json({ error: 'Unauthorized. Please log in.' });
 });
 
@@ -142,7 +181,7 @@ app.post('/api/auth/login', wrap(async (req, res) => {
 
     if (error) {
       if (isBuiltIn) {
-        const token = crypto.randomBytes(24).toString('hex');
+        const token = createSessionToken(username);
         activeTokens.set(token, { username, at: Date.now() });
         return res.json({ ok: true, token, username });
       }
@@ -154,19 +193,19 @@ app.post('/api/auth/login', wrap(async (req, res) => {
 
     if (!data || data.password !== password) {
       if (isBuiltIn) {
-        const token = crypto.randomBytes(24).toString('hex');
+        const token = createSessionToken(username);
         activeTokens.set(token, { username, at: Date.now() });
         return res.json({ ok: true, token, username });
       }
       return res.status(401).json({ error: 'Invalid username or password.' });
     }
 
-    const token = crypto.randomBytes(24).toString('hex');
+    const token = createSessionToken(data.username);
     activeTokens.set(token, { username: data.username, at: Date.now() });
     res.json({ ok: true, token, username: data.username });
   } catch (err) {
     if (isBuiltIn) {
-      const token = crypto.randomBytes(24).toString('hex');
+      const token = createSessionToken(username);
       activeTokens.set(token, { username, at: Date.now() });
       return res.json({ ok: true, token, username });
     }
@@ -632,4 +671,22 @@ server.listen(PORT, () => {
   wa.initialize();
   // Log container memory (incl. Chromium) + disk every 20s so OOM is visible.
   startMemoryMonitor(20000, (msg) => console.log(msg));
+
+  // Automatic keep-alive ping for free-tier hosts (e.g. Render) to prevent container sleep
+  const KEEP_ALIVE_URL = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_KEEP_ALIVE_URL;
+  if (KEEP_ALIVE_URL) {
+    const pingUrl = `${KEEP_ALIVE_URL.replace(/\/+$/, '')}/api/health`;
+    const pingInterval = 10 * 60 * 1000; // 10 minutes (Render sleeps after 15m)
+    setInterval(() => {
+      try {
+        const client = pingUrl.startsWith('https') ? require('https') : http;
+        client.get(pingUrl, (res) => {
+          res.on('data', () => {});
+        }).on('error', (e) => {
+          console.warn(`[keep-alive] ping failed: ${e.message}`);
+        });
+      } catch (_) {}
+    }, pingInterval);
+    console.log(`   Keep-alive active: pinging ${pingUrl} every 10m to prevent sleep\n`);
+  }
 });
