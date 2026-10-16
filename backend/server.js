@@ -157,6 +157,16 @@ app.use((req, res, next) => {
 // ===========================================================================
 // Health & auth
 // ===========================================================================
+app.get('/', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'whatsapp-backend',
+    status: 'online',
+    healthCheck: '/api/health',
+    dashboard: 'https://whatsendz.netlify.app',
+  });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, supabaseConfigured: isConfigured });
 });
