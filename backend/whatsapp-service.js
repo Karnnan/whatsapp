@@ -6,6 +6,7 @@ const {
   fetchLatestBaileysVersion,
   DisconnectReason,
   jidNormalizedUser,
+  Browsers,
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode');
@@ -105,17 +106,16 @@ class WhatsAppService {
         auth: state,
         logger,
         printQRInTerminal: false,
-        browser: ['WhatsApp Control', 'Chrome', '121.0.0'],
+        // Use verified desktop browser signature to prevent "Couldn't link device" blocks
+        browser: Browsers.macOS('Desktop'),
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
-        // More forgiving timeouts so pairing survives free-tier network latency
-        // and each QR stays valid longer (fewer 408 resets while you scan).
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 25000,
-        qrTimeout: 120000,
-        retryRequestDelayMs: 750,
+        qrTimeout: 90000,
+        retryRequestDelayMs: 1000,
       });
       this.sock = sock;
 
@@ -171,12 +171,14 @@ class WhatsAppService {
       const code = lastDisconnect && lastDisconnect.error && lastDisconnect.error.output
         ? lastDisconnect.error.output.statusCode
         : null;
-      const loggedOut = code === DisconnectReason.loggedOut;
+      const loggedOut = code === DisconnectReason.loggedOut || code === 401 || code === 403;
+      const wasReady = !!this.me;
       this.me = null;
       this.sock = null;
 
-      if (loggedOut) {
-        this.log(`Logged out. Clearing session… [${memSnapshot()}]`, 'error');
+      if (loggedOut || !wasReady) {
+        // Reset auth folder so failed/rejected pairing does not poison the next QR scan
+        this.log(`Session closed (code ${code}) — resetting credentials for a clean QR scan… [${memSnapshot()}]`, 'warn');
         this.clearAuth();
         this.setStatus('INITIALIZING');
         setTimeout(() => this.initialize().catch(() => {}), 1500);

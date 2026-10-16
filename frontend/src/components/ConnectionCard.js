@@ -57,9 +57,23 @@ export default function ConnectionCard({ status, qr, me, notify }) {
             <img src={qr} alt="WhatsApp QR code" />
             <div className="qr-scan-line" />
           </div>
-          <p className="small muted center" style={{ maxWidth: 260 }}>
-            Open WhatsApp → <b>Linked devices</b> → <b>Link a device</b>, then scan this code.
+          <p className="small muted center" style={{ maxWidth: 280, margin: '10px 0 6px' }}>
+            Open WhatsApp on phone → <b>Linked devices</b> → <b>Link a device</b>, then scan this code.
           </p>
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={handleLogout}
+              disabled={busy}
+              style={{ fontSize: 12, padding: '5px 12px' }}
+            >
+              {busy ? <span className="spinner" /> : '🔄'} Reset / Generate New QR
+            </button>
+            <span className="small faint center" style={{ fontSize: 11, maxWidth: 280 }}>
+              If you see "Couldn't link device", click Reset to clear old pairing keys and try again.
+            </span>
+          </div>
         </div>
       ) : (
         <div className="qr-wrap">
